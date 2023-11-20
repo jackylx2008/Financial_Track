@@ -57,9 +57,11 @@ class FileSearch:
         return file_list
 
 
-        """
-        [flag_word] : [begin_word, end_word, del_keyword1,...]
-        """
+"""
+[flag_word] : [begin_word, end_word, del_keyword1,...]
+"""
+
+
 class CSVHandler:
     def __init__(
         self, file_path: str, columns_name: list, flag_words: list, card_num: list
@@ -103,10 +105,35 @@ class CSVHandler:
             file_path=file_path, columns_name=columns_name, flag_words=[], card_num=[]
         )
 
-    def _pre_proc_csv(self):
-        if self._is_icbc == "yes":
-            return
-        elif self._is_wechat == "yes":
+    def extract_data(self):
+        # Preprocess CSV file based on the detected type
+        self._preprocess_csv()
+
+        # Read and preprocess the CSV file
+        self._data = self._read_and_preprocess_csv()
+        # Process self._data according to different types
+        if not self._data.empty:
+            if self._is_icbc == "yes":
+                """
+                # ICBC-specific data processing
+                # 对df进行切片处理
+                """
+                # 1.切掉尾巴
+                df_end = self._get_index_with_keyword_in_col(
+                    self._flag_words[1], self._columns_name[0]
+                )
+                self._data = self._data.iloc[: df_end[0] + 1]
+
+                # 2.提取卡号rows
+                self._data = self._data.iloc[
+                    self._get_rows_index_with_feature_list(
+                        self._columns_name[0], self._card_num
+                    )
+                ]
+        return self._data
+
+    def _preprocess_csv(self):
+        if self._is_wechat == "yes":
             try:
                 with open(self._file_path, "r", encoding="utf-8") as f:
                     lines = f.readlines()
@@ -133,46 +160,7 @@ class CSVHandler:
             except FileNotFoundError:
                 print("File not found.")
 
-    def _cut_df(self):
-        """
-        对df进行切片处理
-        """
-        if self._is_icbc == "yes":
-            ## 切掉尾巴
-            df_end = self._get_index_with_keyword_in_col(
-                self._flag_words[1], self._columns_name[0]
-            )
-            self._data = self._data.iloc[: df_end[0] + 1]
-
-            ## 提取卡号rows
-            self._data = self._data.iloc[
-                self._get_rows_index_with_feature_list(
-                    self._columns_name[0], self._card_num
-                )
-            ]
-        else:
-            return
-
-    def _open_csv(self, encoding="utf-8"):
-        """
-        Opens a CSV file as a DataFrame, renames columns, replaces missing values, and returns the DataFrame.
-
-        Args:
-        - encoding (str, optional): The encoding format to use for reading the CSV file. Defaults to "utf-8".
-
-        Returns:
-        - pd.DataFrame: A DataFrame containing the data read from the CSV file with renamed columns and missing values replaced.
-
-        Usage:
-        - Provide the encoding format if the CSV file has a different encoding.
-        - Reads the CSV file specified by 'file_path' attribute.
-        - Renames columns based on 'columns_name' attribute.
-        - Replaces missing values with "No_data".
-        - If the file is not found, it prints an error message and returns an empty DataFrame.
-
-        Note:
-        - 'file_path' and 'columns_name' attributes should be set before calling this function.
-        """
+    def _read_and_preprocess_csv(self, encoding="utf-8"):
         try:
             df = pd.read_csv(self._file_path, encoding=encoding)
 
@@ -185,9 +173,8 @@ class CSVHandler:
 
             # 使用新列名重新命名df的列
             df.columns = new_columns
-
+            # Fill the NaN with "No_data"
             df.fillna("No_data", inplace=True)
-
             return df
         except FileNotFoundError:
             print("File not found.")
@@ -285,16 +272,6 @@ class CSVHandler:
 
         return matching_rows.tolist()
 
-    def get_data(self):
-        self._pre_proc_csv()
-        self._data = self._open_csv()
-        if self._data is not pd.DataFrame().empty:
-            self._cut_df()
-            return self._data
-        else:
-            print("Error: No data found.")
-            raise ValueError("No data found in the file.")
-
 
 def test_icbc():
     file_path = "../data/"
@@ -315,8 +292,6 @@ def test_icbc():
         "商户名称/城市",
         "交易金额/币种",
         "记账金额/币种",
-        "col1",
-        "col2",
     ]
 
     flag_words = [
@@ -326,7 +301,7 @@ def test_icbc():
     ]
     card_num = ["2481"]
     csv_handler = CSVHandler.icbc(file_path[0], column_name, flag_words, card_num)
-    csv_data = csv_handler.get_data()
+    csv_data = csv_handler.extract_data()
 
     print(csv_data)
 
@@ -353,7 +328,7 @@ def test_wechat():
         "备注",
     ]
     csv_handler = CSVHandler.wechat(file_path[0], columns_name)
-    csv_data = csv_handler.get_data()
+    csv_data = csv_handler.extract_data()
 
     print(csv_data)
 
@@ -380,11 +355,11 @@ def test_alipay():
         "备注",
     ]
     csv_handler = CSVHandler.alipay(file_path[0], columns_name)
-    csv_data = csv_handler.get_data()
+    csv_data = csv_handler.extract_data()
     print(csv_data)
 
 
 if __name__ == "__main__":
-    # test_icbc()
-    # test_wechat()
+    test_icbc()
+    test_wechat()
     test_alipay()
