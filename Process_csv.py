@@ -57,11 +57,6 @@ class FileSearch:
         return file_list
 
 
-"""
-[flag_word] : [begin_word, end_word, del_keyword1,...]
-"""
-
-
 class CSVHandler:
     """
     A class to handle CSV files.
@@ -74,6 +69,7 @@ class CSVHandler:
         A list of column names.
     flag_words : list
         A list of flag words.
+        [flag_word] : [begin_word, end_word, del_keyword1,...]
     card_num : list
         A list of card numbers.
 
