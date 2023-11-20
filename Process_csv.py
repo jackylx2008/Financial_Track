@@ -63,6 +63,57 @@ class FileSearch:
 
 
 class CSVHandler:
+    """
+    A class to handle CSV files.
+
+    Parameters
+    ----------
+    file_path : str
+        The path of the CSV file.
+    columns_name : list
+        A list of column names.
+    flag_words : list
+        A list of flag words.
+    card_num : list
+        A list of card numbers.
+
+    Attributes
+    ----------
+    _file_path : str
+        The path of the CSV file.
+    _columns_name : list
+        A list of column names.
+    _flag_words : list
+        A list of flag words.
+    _card_num : list
+        A list of card numbers.
+    _is_icbc : str
+        A string indicating whether the CSV file is from ICBC.
+    _is_wechat : str
+        A string indicating whether the CSV file is from WeChat.
+    _is_alipay : str
+        A string indicating whether the CSV file is from Alipay.
+    _temp_csv : str
+        The path of the temporary CSV file.
+
+    Methods
+    -------
+    extract_data()
+        Extracts data from the CSV file.
+
+    _preprocess_csv()
+        Preprocesses the CSV file based on the detected type.
+
+    _read_and_preprocess_csv(encoding="utf-8")
+        Reads and preprocesses the CSV file.
+
+    _get_index_with_keyword_in_col(keyword: str, col: str) -> list
+        Retrieves indexes of rows in the DataFrame where a specific column contains the given keyword.
+
+    _get_rows_index_with_feature_list(col, feature_list: list) -> list
+        Retrieves the indices of rows containing specified features within a column.
+    """
+
     def __init__(
         self, file_path: str, columns_name: list, flag_words: list, card_num: list
     ):
@@ -106,6 +157,10 @@ class CSVHandler:
         )
 
     def extract_data(self):
+        """
+        Extracts and processes data from the CSV file based on its type.
+        """
+
         # Preprocess CSV file based on the detected type
         self._preprocess_csv()
 
@@ -133,6 +188,9 @@ class CSVHandler:
         return self._data
 
     def _preprocess_csv(self):
+        """
+        Preprocesses the CSV file based on its detected type.
+        """
         if self._is_wechat == "yes":
             try:
                 with open(self._file_path, "r", encoding="utf-8") as f:
@@ -161,6 +219,20 @@ class CSVHandler:
                 print("File not found.")
 
     def _read_and_preprocess_csv(self, encoding="utf-8"):
+        """
+        Reads and preprocesses the CSV file.
+
+        Parameters
+        ----------
+        encoding : str, optional
+            The encoding format of the CSV file. Default is "utf-8".
+
+        Returns
+        -------
+        pandas.DataFrame
+            The processed DataFrame after reading and preprocessing the CSV file.
+            If the file is not found, returns an empty DataFrame.
+        """
         try:
             df = pd.read_csv(self._file_path, encoding=encoding)
 
