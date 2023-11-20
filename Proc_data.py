@@ -57,32 +57,101 @@ class FileSearch:
         return file_list
 
 
+        """
+        [flag_word] : [begin_word, end_word, del_keyword1,...]
+        """
 class CSVHandler:
     def __init__(
         self, file_path: str, columns_name: list, flag_words: list, card_num: list
     ):
-        """
-        [flag_word] : [begin_word, end_word, del_keyword1,...]
-        """
         self._file_path = file_path
-        self._colums_name = columns_name
+        self._columns_name = columns_name
         self._flag_words = flag_words
-        self._data = self._open_csv()
         self._card_num = card_num
+        self._is_icbc = "no"
+        self._is_wechat = "no"
+        self._is_alipay = "no"
+        self._temp_csv = "../Data/temp.csv"
+        if os.path.exists(self._temp_csv):
+            os.remove(self._temp_csv)
 
+        if "icbc" in file_path:
+            self._is_icbc = "yes"
+        elif "微信" in file_path:
+            self._is_wechat = "yes"
+        elif "alipay" in file_path:
+            self._is_alipay = "yes"
+
+    @classmethod
+    def icbc(cls, file_path: str, columns_name: list, flag_words: list, card_num: list):
+        return cls(
+            file_path=file_path,
+            columns_name=columns_name,
+            flag_words=flag_words,
+            card_num=card_num,
+        )
+
+    @classmethod
+    def wechat(cls, file_path: str, columns_name: list):
+        return cls(
+            file_path=file_path, columns_name=columns_name, flag_words=[], card_num=[]
+        )
+
+    @classmethod
+    def alipay(cls, file_path: str, columns_name: list):
+        return cls(
+            file_path=file_path, columns_name=columns_name, flag_words=[], card_num=[]
+        )
+
+    def _pre_proc_csv(self):
+        if self._is_icbc == "yes":
+            return
+        elif self._is_wechat == "yes":
+            try:
+                with open(self._file_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                with open(self._temp_csv, "w", encoding="utf-8") as f:
+                    for i, line in enumerate(lines):
+                        if "微信支付账单明细列表" in line:
+                            f.writelines(lines[i + 1 :])
+                            break
+                    self._file_path = self._temp_csv
+            except FileNotFoundError:
+                print("File not found.")
+        elif self._is_alipay == "yes":
+            try:
+                with open(self._file_path, "r", encoding="utf-8") as f:
+                    lines = f.readlines()
+
+                with open(self._temp_csv, "w", encoding="utf-8") as f:
+                    for i, line in enumerate(lines):
+                        if "支付宝（中国）网络技术有限公司  电子客户回单" in line:
+                            f.writelines(lines[i + 1 :])
+                            break
+                    self._file_path = self._temp_csv
+            except FileNotFoundError:
+                print("File not found.")
+
+    def _cut_df(self):
         """
         对df进行切片处理
         """
-        ## 切掉尾巴
-        df_end = self._get_index_with_keyword_in_col(
-            self._flag_words[1], self._colums_name[0]
-        )
-        self._data = self._data.iloc[: df_end[0] + 1]
+        if self._is_icbc == "yes":
+            ## 切掉尾巴
+            df_end = self._get_index_with_keyword_in_col(
+                self._flag_words[1], self._columns_name[0]
+            )
+            self._data = self._data.iloc[: df_end[0] + 1]
 
-        ## 提取卡号rows
-        self._data = self._data.iloc[
-            self._get_rows_index_with_feature_list(self._colums_name[0], self._card_num)
-        ]
+            ## 提取卡号rows
+            self._data = self._data.iloc[
+                self._get_rows_index_with_feature_list(
+                    self._columns_name[0], self._card_num
+                )
+            ]
+        else:
+            return
 
     def _open_csv(self, encoding="utf-8"):
         """
@@ -106,12 +175,17 @@ class CSVHandler:
         """
         try:
             df = pd.read_csv(self._file_path, encoding=encoding)
-            # # 获取列数
-            # num_columns = df.shape[1]
+
             # 生成新列名的列表
-            new_columns = [col for col in self._colums_name]
+            df_cols = df.shape[1]
+            new_columns = [col for col in self._columns_name]
+            if df_cols > len(new_columns):
+                for i in range(df_cols - len(new_columns)):
+                    new_columns.append("Column_" + str(i + 1))
+
             # 使用新列名重新命名df的列
             df.columns = new_columns
+
             df.fillna("No_data", inplace=True)
 
             return df
@@ -212,7 +286,10 @@ class CSVHandler:
         return matching_rows.tolist()
 
     def get_data(self):
+        self._pre_proc_csv()
+        self._data = self._open_csv()
         if self._data is not pd.DataFrame().empty:
+            self._cut_df()
             return self._data
         else:
             print("Error: No data found.")
@@ -229,6 +306,7 @@ def test_icbc():
         extension, keyword
     )  # 替换为你的 csv 文件路径
 
+    print(file_path)
     column_name = [
         "卡号后四位",
         "交易日",
@@ -247,7 +325,7 @@ def test_icbc():
         "副卡",
     ]
     card_num = ["2481"]
-    csv_handler = CSVHandler(file_path[0], column_name, flag_words, card_num)
+    csv_handler = CSVHandler.icbc(file_path[0], column_name, flag_words, card_num)
     csv_data = csv_handler.get_data()
 
     print(csv_data)
@@ -261,7 +339,7 @@ def test_wechat():
     file = FileSearch(file_path)
     file_path = file.find_files_with_extension_and_keyword(extension, keyword)
     print(file_path)
-    column_name = [
+    columns_name = [
         "交易时间",
         "交易类型",
         "交易对方",
@@ -274,9 +352,39 @@ def test_wechat():
         "商户单号",
         "备注",
     ]
-    flag_word = ["微信支付", ""]
+    csv_handler = CSVHandler.wechat(file_path[0], columns_name)
+    csv_data = csv_handler.get_data()
+
+    print(csv_data)
+
+
+def test_alipay():
+    file_path = "../data/"
+    extension = ".csv"
+    keyword = "alipay"
+    file = FileSearch(file_path)
+    file_path = file.find_files_with_extension_and_keyword(extension, keyword)
+    print(file_path[0])
+    columns_name = [
+        "交易时间",
+        "交易分类",
+        "交易对方",
+        "对方账号",
+        "商品说明",
+        "收/支",
+        "金额",
+        "收/付款方式",
+        "交易状态",
+        "交易订单号",
+        "商家订单号",
+        "备注",
+    ]
+    csv_handler = CSVHandler.alipay(file_path[0], columns_name)
+    csv_data = csv_handler.get_data()
+    print(csv_data)
 
 
 if __name__ == "__main__":
     # test_icbc()
-    test_wechat()
+    # test_wechat()
+    test_alipay()

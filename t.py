@@ -1,20 +1,12 @@
-import pandas as pd
+try:
+    with open("../Data/微信支付账单(20230801-20231101).csv", "r", encoding="utf-8") as f:
+        lines = f.readlines()
 
-# 创建一个示例 DataFrame
-data = {
-    "Name": ["Alice", "Bob", "Charlie", "David"],
-    "Age": [25, 30, 22, 35],
-    "City": ["New York", "San Francisco", "Los Angeles", "Chicago"],
-}
-
-df = pd.DataFrame(data)
-
-# 要查找的特征列表
-l = ["Bob", "30", "San Francisco"]
-
-# 使用布尔索引找到符合特征的行
-matching_rows = df[df.isin(l).any(axis=1)].index
-
-print(data)
-# 打印结果
-print(matching_rows.tolist())
+    with open("../Data/temp.csv", "w", encoding="utf-8") as f:
+        for i, line in enumerate(lines):
+            if "微信支付账单明细列表" in line:
+                f.writelines(lines[i + 1 :])
+                break
+        # self._file_path = "../Data/temp.csv"
+except FileNotFoundError:
+    print("File not found.")
