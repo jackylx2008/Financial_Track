@@ -1,0 +1,16 @@
+jd_pdf_output_dir: {JD_PDF_OUTPUT_DIR}
+jd_browser_user_data_dir: ./raw_data/jd_browser_profile
+jd_pdf_headless: false
+jd_pdf_wait_seconds: 5
+jd_login_timeout_seconds: 300
+jd_order_pages:
+  2024: 4
+  2023: 5
+  2022: 4
+  2021: 4
+  2020: 6
+  2019: 5
+  2018: 3
+  2017: 3
+  2016: 2
+  2015: 2
