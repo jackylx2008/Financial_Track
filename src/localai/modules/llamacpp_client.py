@@ -8,6 +8,8 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+import base64
+import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -280,6 +282,31 @@ class LlamaCppClient:
         )
         return response["choices"][0]["message"]["content"].strip()
 
+    def chat_with_image(self, prompt: str, image_path: Path, max_tokens: int | None = None) -> str:
+        image_url = image_to_data_url(image_path)
+        payload = {
+            "model": self.config.model,
+            "temperature": self.config.temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url}},
+                    ],
+                }
+            ],
+        }
+        response = request_json(
+            f"{self.api_url}/chat/completions",
+            payload=payload,
+            method="POST",
+            timeout_sec=self.config.timeout_sec,
+            api_key=self.config.api_key,
+        )
+        return response["choices"][0]["message"]["content"].strip()
+
 
 def _resolve_path(project_root: Path, value: Any) -> Path:
     path = Path(str(value))
@@ -311,3 +338,9 @@ def _tail(path: Path, lines: int = 80) -> str:
 
 def _redact_command(command: list[str]) -> str:
     return " ".join(f'"{part}"' if " " in part else part for part in command)
+
+
+def image_to_data_url(image_path: Path) -> str:
+    mime_type = mimetypes.guess_type(image_path.name)[0] or "image/png"
+    encoded = base64.b64encode(image_path.read_bytes()).decode("ascii")
+    return f"data:{mime_type};base64,{encoded}"

@@ -4,6 +4,7 @@ raw_data/
 data/
 output/
 input/
+vendor/
 dwg/
 dxf/
 private.yaml

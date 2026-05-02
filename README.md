@@ -103,9 +103,12 @@ python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pag
 
 脚本通过比较相邻截图主体区域判断是否已经到底。美团如果提示“显示更多历史订单”，脚本会暂停；手工点击手机上的按钮后，在终端输入 `c` 继续。直接回车则停止。
 
+拼多多默认使用更短的滑动距离 `--start-y 1700 --end-y 850`，让相邻截图保留更多重叠，避免订单金额刚好被滑过。美团默认仍是 `--start-y 1700 --end-y 500`。
+
 滑动距离不合适时，可以调参数：
 
 ```powershell
+python pdd_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 120 --wait 1.5 --start-y 1700 --end-y 950
 python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 150 --start-y 1800 --end-y 450
 ```
 
@@ -192,6 +195,33 @@ python ai_self_check.py --prompt "请直接回答两个字：可用" --max-token
 ```
 
 脚本会在需要时自动启动 `llama-server`，并在本次流程结束时关闭由它启动的服务以释放显存。
+
+### 订单截图 AI 识别
+
+识别最新一张拼多多截图：
+
+```powershell
+python order_image_ai.py pdd --max-tokens 1024
+```
+
+识别整个拼多多截图目录，默认会在终端显示进度条：
+
+```powershell
+python order_image_ai.py pdd --all --max-tokens 1024
+```
+
+关闭终端进度条：
+
+```powershell
+python order_image_ai.py pdd --all --max-tokens 1024 --no-progress
+```
+
+识别结果默认输出到：
+
+```text
+raw_data/order_json/pdd
+raw_data/order_json/meituan
+```
 
 ## 数据与隐私
 

@@ -31,15 +31,17 @@ class PlatformConfig:
     name: str
     filename_prefix: str
     output_dir: Path
+    default_swipe: tuple[int, int, int, int, int]
 
 
-PLATFORMS = {
-    "pdd": PlatformConfig("pdd", "pinduoduo", Path("raw_data") / "pdd"),
-    "pinduoduo": PlatformConfig("pdd", "pinduoduo", Path("raw_data") / "pdd"),
-    "meituan": PlatformConfig("meituan", "meituan", Path("raw_data") / "meituan"),
-    "mt": PlatformConfig("meituan", "meituan", Path("raw_data") / "meituan"),
-}
 DEFAULT_SWIPE = (540, 1700, 540, 500, 600)
+PDD_DEFAULT_SWIPE = (540, 1700, 540, 850, 600)
+PLATFORMS = {
+    "pdd": PlatformConfig("pdd", "pinduoduo", Path("raw_data") / "pdd", PDD_DEFAULT_SWIPE),
+    "pinduoduo": PlatformConfig("pdd", "pinduoduo", Path("raw_data") / "pdd", PDD_DEFAULT_SWIPE),
+    "meituan": PlatformConfig("meituan", "meituan", Path("raw_data") / "meituan", DEFAULT_SWIPE),
+    "mt": PlatformConfig("meituan", "meituan", Path("raw_data") / "meituan", DEFAULT_SWIPE),
+}
 DEFAULT_STABLE_THRESHOLD = 0.995
 
 
@@ -88,7 +90,7 @@ def add_scroll_parser(subparsers: argparse._SubParsersAction, platform: Platform
         help=f"screenshot output directory, default {platform.output_dir}",
     )
     add_cleanup_args(scroll_parser)
-    add_swipe_args(scroll_parser)
+    add_swipe_args(scroll_parser, platform)
 
 
 def add_until_end_parser(subparsers: argparse._SubParsersAction, platform: PlatformConfig) -> None:
@@ -131,7 +133,7 @@ def add_until_end_parser(subparsers: argparse._SubParsersAction, platform: Platf
         help="stop immediately when screen content stops changing; disables the continue prompt",
     )
     add_cleanup_args(until_end_parser)
-    add_swipe_args(until_end_parser)
+    add_swipe_args(until_end_parser, platform)
 
 
 def add_cleanup_args(parser: argparse.ArgumentParser) -> None:
@@ -142,16 +144,16 @@ def add_cleanup_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_swipe_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--start-x", type=int, default=DEFAULT_SWIPE[0])
-    parser.add_argument("--start-y", type=int, default=DEFAULT_SWIPE[1])
-    parser.add_argument("--end-x", type=int, default=DEFAULT_SWIPE[2])
-    parser.add_argument("--end-y", type=int, default=DEFAULT_SWIPE[3])
+def add_swipe_args(parser: argparse.ArgumentParser, platform: PlatformConfig) -> None:
+    parser.add_argument("--start-x", type=int, default=platform.default_swipe[0], help=f"default {platform.default_swipe[0]}")
+    parser.add_argument("--start-y", type=int, default=platform.default_swipe[1], help=f"default {platform.default_swipe[1]}")
+    parser.add_argument("--end-x", type=int, default=platform.default_swipe[2], help=f"default {platform.default_swipe[2]}")
+    parser.add_argument("--end-y", type=int, default=platform.default_swipe[3], help=f"default {platform.default_swipe[3]}")
     parser.add_argument(
         "--duration-ms",
         type=int,
-        default=DEFAULT_SWIPE[4],
-        help="swipe duration in milliseconds, default 600",
+        default=platform.default_swipe[4],
+        help=f"swipe duration in milliseconds, default {platform.default_swipe[4]}",
     )
 
 
