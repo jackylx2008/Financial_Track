@@ -155,6 +155,44 @@ python taobao_pdf_bot.py
 
 启动后把鼠标放在订单页“下一页”按钮上，脚本会循环点击下一页、触发 `Ctrl+P`、保存 PDF。按 `Ctrl+C` 可停止，鼠标移到屏幕左上角可触发 `pyautogui` 紧急停止。
 
+## 本地 AI 自检
+
+本地 AI 运行时用于后续订单截图 OCR 后的结构化识别。当前使用 `llama.cpp` 的 OpenAI 兼容 HTTP API。
+
+配置说明见：
+
+```text
+LOCAL_AI_RUNTIME_SETUP.md
+```
+
+真实本机路径写入 `common.env`，不要提交到 git。关键变量包括：
+
+```env
+LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
+LLAMACPP_MODEL=local-model
+LLAMACPP_AUTOSTART=true
+LLAMACPP_SERVER_PATH=
+LLAMACPP_MODEL_PATH=
+LLAMACPP_MMPROJ_PATH=
+LLAMACPP_EXTRA_DLL_DIRS=./vendor/cuda12
+LLAMACPP_N_GPU_LAYERS=999
+LLAMACPP_CTX_SIZE=8192
+```
+
+只检查 CUDA、服务健康状态和模型列表：
+
+```powershell
+python ai_self_check.py --no-chat
+```
+
+完整对话测试：
+
+```powershell
+python ai_self_check.py --prompt "请直接回答两个字：可用" --max-tokens 32
+```
+
+脚本会在需要时自动启动 `llama-server`，并在本次流程结束时关闭由它启动的服务以释放显存。
+
 ## 数据与隐私
 
 `raw_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。

@@ -14,3 +14,27 @@ jd_order_pages:
   2017: 3
   2016: 2
   2015: 2
+
+app:
+  log_level: ${LOG_LEVEL:-INFO}
+
+llamacpp:
+  base_url: ${LLAMACPP_BASE_URL:-http://127.0.0.1:8080/v1}
+  model: ${LLAMACPP_MODEL:-local-model}
+  api_key: ${LLAMACPP_API_KEY:-}
+  timeout_sec: ${LLAMACPP_TIMEOUT_SEC:-120}
+  max_tokens: ${LLAMACPP_MAX_TOKENS:-4096}
+  temperature: ${LLAMACPP_TEMPERATURE:-0}
+  autostart: ${LLAMACPP_AUTOSTART:-true}
+  server_path: ${LLAMACPP_SERVER_PATH:-}
+  model_path: ${LLAMACPP_MODEL_PATH:-}
+  mmproj_path: ${LLAMACPP_MMPROJ_PATH:-}
+  extra_dll_dirs: ${LLAMACPP_EXTRA_DLL_DIRS:-}
+  n_gpu_layers: ${LLAMACPP_N_GPU_LAYERS:-999}
+  ctx_size: ${LLAMACPP_CTX_SIZE:-8192}
+  reasoning: ${LLAMACPP_REASONING:-off}
+  reasoning_budget: ${LLAMACPP_REASONING_BUDGET:-0}
+  startup_timeout_sec: ${LLAMACPP_STARTUP_TIMEOUT_SEC:-180}
+  startup_poll_interval_sec: ${LLAMACPP_STARTUP_POLL_INTERVAL_SEC:-1}
+  stdout_log_path: ${LLAMACPP_STDOUT_LOG_PATH:-./log/llama_server.out.log}
+  stderr_log_path: ${LLAMACPP_STDERR_LOG_PATH:-./log/llama_server.err.log}
