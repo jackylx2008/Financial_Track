@@ -182,6 +182,20 @@ LLAMACPP_N_GPU_LAYERS=999
 LLAMACPP_CTX_SIZE=8192
 ```
 
+`vendor/cuda12/` 只放本机运行需要的 CUDA runtime DLL，不提交到 git。需要的 DLL 从 NVIDIA 官方 CUDA Toolkit 获取：
+
+```text
+https://developer.nvidia.com/cuda-toolkit-archive
+```
+
+安装或解压 CUDA Toolkit 12.x 后，复制以下文件到 `vendor/cuda12/`：
+
+```text
+cudart64_12.dll
+cublas64_12.dll
+cublasLt64_12.dll
+```
+
 只检查 CUDA、服务健康状态和模型列表：
 
 ```powershell

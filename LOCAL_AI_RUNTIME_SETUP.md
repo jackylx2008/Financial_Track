@@ -50,6 +50,41 @@ vendor/cuda12/cublasLt64_12.dll
 
 这些 DLL 用于让 `ggml-cuda.dll` 在目标机器上能被 Windows 正确加载。部署到其他电脑时，仍需要目标电脑有可用的 NVIDIA 驱动；项目内 DLL 不替代显卡驱动。
 
+### CUDA runtime DLL 来源
+
+`vendor/cuda12/` 不提交到 git，需要在每台机器本地准备。优先从 NVIDIA 官方 CUDA Toolkit 获取，不要从第三方 DLL 下载站复制。
+
+官方下载入口：
+
+```text
+https://developer.nvidia.com/cuda-toolkit-archive
+```
+
+推荐做法：
+
+1. 在 NVIDIA CUDA Toolkit Archive 下载与 `llama.cpp` 构建匹配的 CUDA 12.x Windows 安装包。
+2. 安装 CUDA Toolkit，或用支持的解压工具从安装包中取出运行时文件。
+3. 从 CUDA Toolkit 安装目录复制以下 DLL 到项目目录 `vendor/cuda12/`：
+
+```text
+cudart64_12.dll
+cublas64_12.dll
+cublasLt64_12.dll
+```
+
+常见安装位置类似：
+
+```text
+C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v12.x\bin\
+```
+
+说明：
+
+- `cudart64_12.dll` 属于 CUDA Runtime。
+- `cublas64_12.dll` 和 `cublasLt64_12.dll` 属于 cuBLAS runtime。
+- DLL 主版本要和 `llama-server.exe` / `ggml-cuda.dll` 构建时使用的 CUDA 主版本一致；当前目录名 `cuda12` 表示使用 CUDA 12 系列 DLL。
+- 这些 DLL 只补足本地运行时依赖，不替代 NVIDIA 显卡驱动；驱动仍通过 NVIDIA 官方驱动安装。
+
 ## 2. Python 环境
 
 创建虚拟环境：
