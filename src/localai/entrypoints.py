@@ -28,6 +28,7 @@ def bootstrap_context(entry_file: str, config_path: str = "config.yaml") -> AppC
     setup_logger(
         log_level=log_level,
         log_file=str(project_root / "log" / f"{entry_name}.log"),
+        filemode="a",
     )
     return AppContext(project_root=project_root, config=config, entry_name=entry_name)
 

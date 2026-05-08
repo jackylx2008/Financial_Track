@@ -4,8 +4,11 @@
 from __future__ import annotations
 
 import argparse
+import json
+import logging
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 
@@ -16,6 +19,9 @@ if SRC_PATH not in sys.path:
 
 from localai.entrypoints import bootstrap_context, print_json
 from localai.flows.order_image_extract import run
+
+
+logger = logging.getLogger(__name__)
 
 
 PLATFORM_INPUT_DIRS = {
@@ -50,6 +56,13 @@ def main() -> int:
     platform = PLATFORM_OUTPUT_NAMES[args.platform]
     image_paths = resolve_image_paths(args, ctx.project_root)
     output_dir = resolve_output_dir(args, ctx.project_root, platform)
+    logger.info(
+        "Resolved order image AI job: platform=%s all=%s image_count=%s output_dir=%s",
+        platform,
+        args.all,
+        len(image_paths),
+        output_dir,
+    )
     progress = None if args.no_progress else ConsoleProgress(total=len(image_paths))
     try:
         results = run(
@@ -63,7 +76,10 @@ def main() -> int:
     finally:
         if progress:
             progress.finish()
-    print_json({"platform": platform, "results": results})
+    summary = {"platform": platform, "results": results}
+    append_terminal_summary_log(ctx.project_root, summary)
+    logger.info("Saved terminal result summary to log/order_image_ai.log")
+    print_json(summary)
     return 0
 
 
@@ -136,6 +152,17 @@ def _shorten(value: str, max_length: int) -> str:
     if len(value) <= max_length:
         return value
     return value[: max_length - 3] + "..."
+
+
+def append_terminal_summary_log(project_root: Path, summary: dict[str, object]) -> None:
+    log_path = project_root / "log" / "order_image_ai.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    payload = json.dumps(summary, ensure_ascii=False, indent=2)
+    with log_path.open("a", encoding="utf-8") as log_file:
+        log_file.write(f"\n{timestamp} - INFO - order_image_ai - Terminal result summary follows\n")
+        log_file.write(payload)
+        log_file.write("\n")
 
 
 if __name__ == "__main__":

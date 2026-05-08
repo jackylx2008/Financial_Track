@@ -237,6 +237,14 @@ raw_data/order_json/pdd
 raw_data/order_json/meituan
 ```
 
+运行日志写入：
+
+```text
+log/order_image_ai.log
+```
+
+日志会记录任务参数、图片总数、每张图片的开始/完成、输出 JSON 路径、订单数量、告警和最终汇总。终端进度条本身不会逐帧写入日志。
+
 ## 数据与隐私
 
 `raw_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。

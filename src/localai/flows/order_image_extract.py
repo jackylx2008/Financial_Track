@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any, Callable
 
@@ -7,6 +8,9 @@ from localai.context import AppContext
 from localai.modules.json_extractor import parse_json_from_text
 from localai.modules.llamacpp_client import LlamaCppClient, LlamaCppConfig
 from localai.modules.order_image_prompt import build_order_image_prompt
+
+
+logger = logging.getLogger(__name__)
 
 
 def run(
@@ -23,22 +27,40 @@ def run(
 
     results: list[dict[str, Any]] = []
     try:
+        logger.info(
+            "Starting order image extraction: platform=%s images=%s output_dir=%s max_tokens=%s",
+            platform,
+            len(image_paths),
+            output_dir,
+            max_tokens,
+        )
         _health, models = client.ensure_server()
         client.assert_model_available(models)
 
         total = len(image_paths)
         for index, image_path in enumerate(image_paths, start=1):
             _notify_progress(progress_callback, index, total, image_path, "start")
+            logger.info("Extracting image %s/%s: %s", index, total, image_path)
             try:
                 result = extract_one_image(client, platform, image_path, output_dir, max_tokens)
             except Exception:
                 _notify_progress(progress_callback, index, total, image_path, "error")
+                logger.exception("Failed extracting image %s/%s: %s", index, total, image_path)
                 raise
             results.append(result)
             _notify_progress(progress_callback, index, total, image_path, "done")
+            logger.info(
+                "Extracted image %s/%s: output=%s orders_count=%s warnings=%s",
+                index,
+                total,
+                result["output"],
+                result["orders_count"],
+                result["warnings"],
+            )
     finally:
         client.shutdown_server()
 
+    logger.info("Finished order image extraction: platform=%s images=%s", platform, len(image_paths))
     return results
 
 
