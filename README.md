@@ -250,3 +250,120 @@ log/order_image_ai.log
 `raw_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
 
 当前安卓截图只是采集阶段，后续 OCR、AI 识别和订单级去重应基于这些截图继续扩展。
+
+## 银行邮件流水采集
+
+银行交易提醒、信用卡账单等邮件可以作为另一类底层原始数据。项目提供 `bank_email_bot.py`，通过 IMAP 读取邮箱，把匹配到的银行邮件保存为本地原始产物：
+
+```text
+raw_data/email_bank/eml/                  # 邮件原文 .eml
+raw_data/email_bank/body/                 # 抽取后的正文文本
+raw_data/email_bank/attachments/          # 邮件附件
+raw_data/email_bank/bank_email_records.jsonl
+raw_data/email_bank/bank_email_records.json
+raw_data/email_bank/bank_email_summary.md
+```
+
+先在 `common.env` 中配置邮箱 IMAP 信息。网易 126 邮箱使用 `imap.126.com:993`，密码应填写客户端授权码，不要使用网页登录密码：
+
+```env
+BANK_EMAIL_IMAP_HOST=imap.126.com
+BANK_EMAIL_IMAP_PORT=993
+BANK_EMAIL_IMAP_USER=your-account@126.com
+BANK_EMAIL_IMAP_PASSWORD=your-126-authorization-code
+BANK_EMAIL_CLIENT_SUPPORT_EMAIL=support@example.invalid
+BANK_EMAIL_SINCE=2024-01-01
+BANK_EMAIL_MAX_MESSAGES=200
+BANK_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]
+```
+
+网易邮箱在第三方客户端登录后还要求发送 IMAP `ID` 客户端身份信息。项目会自动发送 `FinancialTrack` 的 `ID` 信息，以避免 `Unsafe Login. Please contact kefu@188.com for help` 这类 `SELECT/EXAMINE INBOX` 阶段拦截。
+
+运行：
+
+```powershell
+python bank_email_bot.py --since 2024-01-01 --max-messages 500
+```
+
+也可以先解析已经导出的 `.eml` 文件，避免直接连接邮箱：
+
+```powershell
+python bank_email_bot.py --eml-dir raw_data/email_export
+```
+
+当前邮件解析会先按 `config.yaml` 中的 `bank_email.rules` 匹配银行邮件；如果没有命中银行规则，则使用 `BANK_EMAIL_SUBJECT_KEYWORDS_JSON` 中的标题关键字兜底捕捉银行账单/流水邮件。解析器会递归保存邮件中的 PDF 等附件，再用通用金额、时间、卡尾号正则抽取 `candidate_transactions`。这一步是“原始数据层”，不是最终账本；后续应按具体银行邮件模板增加专用 parser，并把候选交易合并进统一流水 schema。
+
+### 银行附件密码准备
+
+银行账单 PDF 或 ZIP 附件通常带密码。真实密码放在独立文件 `bank_attachment_passwords.env`，不要放进 `common.env`，也不要提交到版本库。先复制模板：
+
+```powershell
+Copy-Item bank_attachment_passwords.env.example bank_attachment_passwords.env
+```
+
+可配置项：
+
+```env
+BANK_ATTACHMENT_PASSWORD_DEFAULT=
+BANK_ATTACHMENT_PASSWORD_BY_BANK_JSON={"cmb":"password-for-cmb"}
+BANK_ATTACHMENT_PASSWORD_BY_FILENAME_JSON={"statement.pdf":"password-for-this-file"}
+BANK_ATTACHMENT_PASSWORD_BY_PATTERN_JSON={"招商":"password-for-filename-containing-this-text"}
+BANK_ATTACHMENT_PASSWORD_BY_TYPE_JSON={"pdf":["pdf-password-1","pdf-password-2"],"zip":["zip-password-1","zip-password-2"]}
+BANK_ATTACHMENT_PDF_PWD=["pdf-password-1","pdf-password-2"]
+BANK_ATTACHMENT_ZIP_PWD=["zip-password-1","zip-password-2"]
+```
+
+生成附件清单并检查哪些附件还缺密码：
+
+```powershell
+python bank_attachment_prepare.py
+```
+
+默认输出：
+
+```text
+raw_data/email_bank/attachment_inventory.json
+raw_data/email_bank/attachment_inventory.md
+```
+
+`BANK_ATTACHMENT_PASSWORD_BY_TYPE_JSON` 是标准的按文件类型配置方式；`BANK_ATTACHMENT_PDF_PWD` 和 `BANK_ATTACHMENT_ZIP_PWD` 是按类型配置的简写。清单只记录是否已匹配到密码、匹配来源和候选密码数量，不输出真实密码。
+
+尝试解密/解压附件：
+
+```powershell
+python bank_attachment_extract.py
+```
+
+默认输出：
+
+```text
+raw_data/email_bank/extracted_attachments/attachment_extract_manifest.json
+raw_data/email_bank/extracted_attachments/attachment_extract_failures.md
+```
+
+日志会记录每个附件的解密/解压结果、密码来源和候选数量，不记录真实密码。
+
+### 银行流水统一整理
+
+已下载的邮件正文候选交易和已成功解密/解压的 PDF、ZIP 内部文件可以整理为统一银行流水中间层：
+
+```powershell
+python consolidate_bank_transactions.py
+```
+
+默认读取：
+
+```text
+raw_data/email_bank/bank_email_records.jsonl
+raw_data/email_bank/extracted_attachments/attachment_extract_manifest.json
+```
+
+默认输出：
+
+```text
+raw_data/normalized/bank_transactions.jsonl
+raw_data/normalized/bank_transactions.json
+raw_data/normalized/bank_transactions_quality_report.md
+```
+
+整理过程会按统一 schema 标准化金额、方向、账户尾号、来源引用等字段，并在 normalized 层做去重合并。每条去重后的记录会保留 `source_records`，用于回查原始邮件、附件、PDF 或 Excel 行。邮件正文候选通常缺交易时间和账户信息，当前按低置信度来源进入质量报告；已成功解密的 PDF/XLS 附件是第一阶段更可靠的流水来源。

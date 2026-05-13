@@ -38,3 +38,51 @@ llamacpp:
   startup_poll_interval_sec: ${LLAMACPP_STARTUP_POLL_INTERVAL_SEC:-1}
   stdout_log_path: ${LLAMACPP_STDOUT_LOG_PATH:-./log/llama_server.out.log}
   stderr_log_path: ${LLAMACPP_STDERR_LOG_PATH:-./log/llama_server.err.log}
+
+bank_email:
+  output_dir: ${BANK_EMAIL_OUTPUT_DIR:-./raw_data/email_bank}
+  mailbox: ${BANK_EMAIL_MAILBOX:-INBOX}
+  since: ${BANK_EMAIL_SINCE:-2024-01-01}
+  before: ${BANK_EMAIL_BEFORE:-}
+  max_messages: ${BANK_EMAIL_MAX_MESSAGES:-200}
+  subject_keywords: ${BANK_EMAIL_SUBJECT_KEYWORDS_JSON:-["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]}
+  imap:
+    host: ${BANK_EMAIL_IMAP_HOST:-imap.126.com}
+    port: ${BANK_EMAIL_IMAP_PORT:-993}
+    user: ${BANK_EMAIL_IMAP_USER:-}
+    password: ${BANK_EMAIL_IMAP_PASSWORD:-}
+    support_email: ${BANK_EMAIL_CLIENT_SUPPORT_EMAIL:-support@example.invalid}
+    client_id:
+      name: FinancialTrack
+      version: "1.0"
+      vendor: local-python
+      support-email: ${BANK_EMAIL_CLIENT_SUPPORT_EMAIL:-support@example.invalid}
+  rules:
+    - bank_key: cmb
+      bank_name: 招商银行
+      sender_contains: ["cmbchina", "cmb"]
+      subject_contains: ["招商银行", "信用卡", "账单", "交易", "动账"]
+      body_contains: ["招商银行", "尾号"]
+    - bank_key: icbc
+      bank_name: 工商银行
+      sender_contains: ["icbc"]
+      subject_contains: ["工商银行", "工银", "交易", "账单"]
+      body_contains: ["工商银行", "工银"]
+    - bank_key: ccb
+      bank_name: 建设银行
+      sender_contains: ["ccb"]
+      subject_contains: ["建设银行", "建行", "交易", "账单"]
+      body_contains: ["建设银行", "建行"]
+    - bank_key: abc
+      bank_name: 农业银行
+      sender_contains: ["abchina", "abc"]
+      subject_contains: ["农业银行", "农行", "交易", "账单"]
+      body_contains: ["农业银行", "农行"]
+    - bank_key: boc
+      bank_name: 中国银行
+      sender_contains: ["bank-of-china", "boc"]
+      subject_contains: ["中国银行", "中行", "交易", "账单"]
+      body_contains: ["中国银行", "中行"]
+
+bank_attachments:
+  password_env_file: ${BANK_ATTACHMENT_PASSWORD_ENV_FILE:-./bank_attachment_passwords.env}
