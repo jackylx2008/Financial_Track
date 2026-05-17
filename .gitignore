@@ -5,6 +5,7 @@ data/
 output/
 input/
 vendor/
+COMMON_PROJECT_SKILLS.md
 dwg/
 dxf/
 private.yaml

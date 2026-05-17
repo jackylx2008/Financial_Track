@@ -1,5 +1,33 @@
 # -*- coding: utf-8 -*-
-"""Extract visible order data from Android order screenshots with local AI vision."""
+"""订单截图本地 AI 识别工具
+
+用途：
+  读取拼多多或美团 Android 订单截图，调用本地视觉模型识别截图中的可见订单信息，并生成结构化 JSON。
+
+配置文件：
+  默认读取项目根目录 `config.yaml`，其中 `app` 负责日志级别，`llamacpp` 负责本地视觉模型服务地址、
+  模型路径、自动启动参数和推理参数。`common.env` 可为本机模型路径、服务地址和日志路径等环境变量占位提供覆盖值。
+
+必填参数：
+  platform  订单平台，可选 `pdd`、`pinduoduo`、`meituan`。
+
+可选参数：
+  --config      配置文件路径，默认 `config.yaml`。
+  --image       只识别单张截图。
+  --input-dir   截图输入目录；未传入时按平台读取 `raw_data/pdd` 或 `raw_data/meituan`。
+  --output-dir  JSON 输出目录；未传入时写入 `raw_data/order_json/<platform>`。
+  --all         识别输入目录中的全部 PNG；未传入时只识别最新一张。
+  --max-images  使用 `--all` 时限制处理图片数量。
+  --max-tokens  每次视觉请求最大输出 token 数，默认 2048。
+  --no-progress 禁用终端进度显示。
+
+示例：
+  python order_image_ai.py pdd --all
+  python order_image_ai.py meituan --image raw_data/meituan/example.png
+
+输出：
+  将每张截图的识别结果写入 JSON 输出目录，在控制台输出 JSON 汇总，并追加终端摘要到 `log/order_image_ai.log`。
+"""
 
 from __future__ import annotations
 

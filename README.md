@@ -1,9 +1,11 @@
 # Financial Track
 
-个人消费订单采集辅助工具。当前项目包含两类能力：
+个人消费与银行流水采集整理辅助工具。当前项目包含几类能力：
 
 - 京东、淘宝订单页面导出为 PDF。
 - 通过安卓手机 ADB 截取拼多多、美团订单页面截图，作为后续 OCR 和 AI 结构化识别的输入。
+- 调用本地 `llama.cpp` OpenAI 兼容接口，对订单截图做结构化识别。
+- 采集银行邮件、解密/解压账单附件，并整理为统一银行流水中间层。
 
 本项目面向个人账号自用，不包含平台逆向接口、抓包或绕过风控逻辑。
 
@@ -17,10 +19,22 @@ Financial_Track/
   order_capture/             # ADB 截图基础模块
   jd_pdf_bot.py              # 京东订单 PDF 导出
   taobao_pdf_bot.py          # 淘宝订单 PDF 辅助打印
-  config.yaml                # 京东 PDF 导出配置
-  common.env                 # 本地环境变量
+  bank_email_bot.py          # 银行邮件原始数据采集
+  bank_attachment_prepare.py # 银行附件密码匹配与清单生成
+  bank_attachment_extract.py # 银行附件解密/解压
+  consolidate_bank_transactions.py # 银行流水统一整理
+  src/localai/
+    entrypoints.py           # 入口脚本公共启动辅助
+    logging_config.py        # 统一日志配置
+    flows/                   # 场景编排层
+    modules/                 # 可复用基础能力模块
+  config.yaml                # 项目运行配置
+  common.env.example         # 本地环境变量模板
   raw_data/                  # 本地采集数据，已被 git 忽略
+  log/                       # 运行日志，已被 git 忽略
 ```
+
+项目采用“根目录独立入口脚本 + `src/localai/flows` 编排层 + `src/localai/modules` 基础模块”的结构。入口脚本只负责读取配置、初始化日志、创建上下文并调用对应流程，核心处理逻辑应放在 `flows` 或 `modules` 中。
 
 ## 环境准备
 
@@ -29,9 +43,41 @@ Financial_Track/
 安装 Python 依赖：
 
 ```powershell
-pip install playwright pyyaml python-dotenv pyautogui pillow
+pip install -r requirements.txt
 python -m playwright install chromium
 ```
+
+如果只运行部分工具，也可以按需安装：
+
+```powershell
+pip install playwright pyyaml python-dotenv pyautogui pillow
+```
+
+## 配置、日志与本地文件
+
+项目配置入口是根目录 `config.yaml`。本机路径、账号、授权码、服务路径等本地差异放在 `common.env`，仓库只保留 `common.env.example` 作为模板：
+
+```powershell
+Copy-Item common.env.example common.env
+```
+
+跨 Windows、macOS 或 Linux 同步开发时，不要在源码或 `config.yaml` 中写死本机绝对路径。推荐使用 `${CLOUDSTATION_ROOT}` 占位，并在 `common.env` 中配置平台变量：
+
+```env
+CLOUDSTATION_ROOT_WINDOWS=D:\CloudStation
+CLOUDSTATION_ROOT_MACOS=~/CloudStation
+CLOUDSTATION_ROOT_LINUX=~/CloudStation
+```
+
+统一日志配置位于 `src/localai/logging_config.py`，不再放在项目根目录。默认日志写入根目录 `log/`，日志文件名通常对应入口脚本名，例如：
+
+```text
+log/ai_self_check.log
+log/order_image_ai.log
+log/bank_email_bot.log
+```
+
+`common.env`、`bank_attachment_passwords.env`、`raw_data/`、`log/`、`vendor/` 等本地文件或运行产物不应提交到 git。
 
 安卓订单截图需要 ADB。可以使用 Android Platform Tools，也可以使用 MuMu 自带的 ADB：
 
@@ -367,3 +413,55 @@ raw_data/normalized/bank_transactions_quality_report.md
 ```
 
 整理过程会按统一 schema 标准化金额、方向、账户尾号、来源引用等字段，并在 normalized 层做去重合并。每条去重后的记录会保留 `source_records`，用于回查原始邮件、附件、PDF 或 Excel 行。邮件正文候选通常缺交易时间和账户信息，当前按低置信度来源进入质量报告；已成功解密的 PDF/XLS 附件是第一阶段更可靠的流水来源。
+
+## GitHub 同步
+
+推荐使用 SSH remote，避免 HTTPS 凭据和部分网络环境下的 443 连接问题。先检查当前仓库状态和远端：
+
+```powershell
+git status -sb
+git remote -v
+```
+
+如果 `origin` 还是 HTTPS，可切换为 SSH：
+
+```powershell
+git remote set-url origin git@github.com:<owner>/<repo>.git
+```
+
+提交前重点确认不要提交本地隐私数据、真实账单、浏览器 profile、授权码、token、密码、附件、订单截图、账单 PDF、`common.env` 或 `bank_attachment_passwords.env`：
+
+```powershell
+git status --short --ignored
+```
+
+日常同步建议先拉取远端主分支，再提交和推送：
+
+```powershell
+$env:GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new'
+git pull --rebase origin main
+git add .
+git commit -m "简短说明本次改动"
+git push origin main
+```
+
+如果当前分支不是 `main`，用实际分支名替换：
+
+```powershell
+git branch --show-current
+git push origin <branch-name>
+```
+
+推送后验证本地和远端是否同步：
+
+```powershell
+$env:GIT_SSH_COMMAND='ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new'
+git fetch origin
+git status -sb
+```
+
+如果遇到 `Permission denied (publickey).`，说明本机 SSH key 未被 GitHub 接受，需要确认公钥已添加到 GitHub，并检查：
+
+```powershell
+ssh -T git@github.com
+```

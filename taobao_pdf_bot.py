@@ -1,9 +1,30 @@
 # -*- coding: utf-8 -*-
-"""
-淘宝订单分页自动打印 PDF 工具 (taobao_order_pdf_auto.py)
-功能：自动点击下一页 → Ctrl+P 打印 → 重命名保存 → 循环至 Ctrl+C 中断
-依赖：pip install pyautogui
-注意：请确保浏览器默认打印目标为“另存为 PDF”，且打印对话框布局为标准样式。
+"""淘宝订单分页自动打印 PDF 工具
+
+用途：
+  通过 PyAutoGUI 操作当前浏览器页面，按“点击下一页、触发 Ctrl+P、确认另存为 PDF、输入文件名”的顺序循环导出
+  淘宝订单分页 PDF，直到用户按 Ctrl+C 中断。
+
+配置文件：
+  本入口不读取 `config.yaml` 或 `.env`。运行参数固定写在文件顶部配置区，包括页面加载等待、打印对话框等待、
+  保存对话框等待、页间随机等待、启动倒计时和起始页码。运行前需要手动打开淘宝订单页面，并将浏览器默认打印目标
+  设置为“另存为 PDF”。
+
+必填参数：
+  无。本工具通过文件顶部配置区和当前浏览器状态运行。
+
+可选参数：
+  无。需要调整等待时间、起始页码或倒计时，请修改文件顶部配置区。
+
+示例：
+  python taobao_pdf_bot.py
+
+输出：
+  PDF 由系统打印保存对话框写入用户选择的目录，文件名格式为 `<运行日期>_淘宝订单_<页码>.pdf`；
+  控制台和日志输出每页处理进度、保存文件名和中断统计。
+
+依赖：
+  pip install pyautogui
 """
 
 import pyautogui
@@ -11,8 +32,14 @@ import random
 import time
 import sys
 from datetime import datetime
+from pathlib import Path
 
-from logging_config import get_logger, setup_logger
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_PATH = str(PROJECT_ROOT / "src")
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
+
+from localai.logging_config import get_logger, setup_logger
 
 # ================= 配置区域 =================
 # 请根据电脑性能和网络速度调整以下延迟时间（单位：秒）

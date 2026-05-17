@@ -1,13 +1,31 @@
 # -*- coding: utf-8 -*-
-"""
-JD order page PDF exporter.
+"""京东订单页面 PDF 导出工具
 
-Renders JD order pages in Chromium and writes PDFs directly. It does not use
-mouse clicks, Ctrl+P, or the system print dialog.
+用途：
+  使用 Playwright 启动 Chromium 渲染京东订单页面并直接保存为 PDF，不依赖鼠标点击、Ctrl+P 或系统打印对话框。
+  可按配置批量导出年份页码，也可只导出指定订单 URL。
 
-Dependencies:
-    pip install playwright pyyaml python-dotenv
-    python -m playwright install chromium
+配置文件：
+  默认读取项目根目录 `config.yaml` 和 `common.env`。`config.yaml` 中的 `jd_pdf_output_dir`
+  指定 PDF 输出目录，`jd_browser_user_data_dir` 指定浏览器用户数据目录，`jd_order_pages` 指定批量导出的年份和页码，
+  `jd_pdf_headless`、`jd_pdf_wait_seconds`、`jd_login_timeout_seconds` 控制浏览器运行方式和等待时间。
+  `common.env` 可提供 `JD_PDF_OUTPUT_DIR` 等本机路径变量。
+
+可选参数：
+  --url       只打印指定的京东订单 URL；传入后会忽略 `config.yaml` 中的 `jd_order_pages`。
+  --headless  使用无头浏览器。首次登录京东时不建议使用。
+  --headed    强制显示浏览器窗口。
+
+示例：
+  python jd_pdf_bot.py
+  python jd_pdf_bot.py --url "https://order.jd.com/center/list.action?d=2024&s=4096&page=1"
+
+输出：
+  将 PDF 写入 `jd_pdf_output_dir` 指定目录，文件名包含订单年份、页码或 custom 标记以及时间戳；运行日志写入 `log/`。
+
+依赖：
+  pip install playwright pyyaml python-dotenv
+  python -m playwright install chromium
 """
 
 import argparse
@@ -22,7 +40,12 @@ from typing import Any
 import yaml
 from dotenv import load_dotenv
 
-from logging_config import get_logger, setup_logger
+PROJECT_ROOT = Path(__file__).resolve().parent
+SRC_PATH = str(PROJECT_ROOT / "src")
+if SRC_PATH not in sys.path:
+    sys.path.insert(0, SRC_PATH)
+
+from localai.logging_config import get_logger, setup_logger
 
 
 JD_ORDER_URL_TEMPLATE = "https://order.jd.com/center/list.action?d={year}&s=4096&page={page}"

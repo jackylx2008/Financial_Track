@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from localai.context import AppContext
+from localai.logging_config import setup_logger
 from localai.modules.config_loader import load_config
 
 
@@ -22,7 +23,6 @@ def bootstrap_context(entry_file: str, config_path: str = "config.yaml") -> AppC
 
     config = load_config(config_file)
     entry_name = Path(entry_file).stem
-    from logging_config import setup_logger
 
     log_level = getattr(logging, str(config.get("app", {}).get("log_level", "INFO")).upper(), logging.INFO)
     setup_logger(

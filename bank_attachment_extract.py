@@ -1,5 +1,27 @@
 # -*- coding: utf-8 -*-
-"""Try password candidates against bank email attachments and extract/decrypt them."""
+"""银行邮件附件解密提取工具
+
+用途：
+  读取银行邮件附件清单，使用配置的密码候选尝试解密或解压附件，并调用银行附件提取编排流程生成可解析文件。
+
+配置文件：
+  默认读取项目根目录 `config.yaml`，其中 `app` 负责日志级别，`bank_attachments.password_env_file`
+  指定私有密码环境文件。`common.env` 可为配置中的环境变量占位提供本机覆盖值；密码文件默认可使用
+  `bank_attachment_passwords.env`。
+
+可选参数：
+  --config        配置文件路径，默认 `config.yaml`。
+  --inventory     附件清单路径，默认 `raw_data/email_bank/attachment_inventory.json`。
+  --password-env  私有附件密码环境文件路径；未传入时使用 `config.yaml` 中的配置。
+  --output-dir    解密或解压后的文件输出目录，默认 `raw_data/email_bank/extracted_attachments`。
+
+示例：
+  python bank_attachment_extract.py
+  python bank_attachment_extract.py --password-env bank_attachment_passwords.env
+
+输出：
+  将提取后的附件文件和提取清单写入输出目录，并在控制台输出 JSON 汇总结果。
+"""
 
 from __future__ import annotations
 

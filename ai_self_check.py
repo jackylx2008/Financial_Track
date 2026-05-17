@@ -1,3 +1,26 @@
+"""本地 AI 运行环境自检工具
+
+用途：
+  检查本机 CUDA、llama.cpp 服务和本地模型聊天接口是否可用，调用本地 AI 自检编排流程。
+
+配置文件：
+  默认读取项目根目录 `config.yaml`，其中 `app` 负责日志级别，`llamacpp` 负责服务地址、模型路径、
+  自动启动参数和日志路径。`common.env` 可为 `config.yaml` 中的环境变量占位提供本机覆盖值。
+
+可选参数：
+  --config      配置文件路径，默认 `config.yaml`。
+  --prompt      发送给本地模型的测试提示词。
+  --max-tokens  自检聊天请求最大输出 token 数，默认 128。
+  --no-chat     只检查服务启动和可达性，不发起聊天补全请求。
+
+示例：
+  python ai_self_check.py
+  python ai_self_check.py --config config.yaml --no-chat
+
+输出：
+  在控制台输出 JSON 自检结果；运行日志按统一日志配置写入 `log/` 目录。
+"""
+
 from __future__ import annotations
 
 import argparse
