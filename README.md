@@ -21,6 +21,9 @@ Financial_Track/
   taobao_pdf_bot.py          # 淘宝订单 PDF 辅助打印
   financial_email_bot.py          # 流水邮件原始数据采集
   financial_email_workflow/       # 邮件流水处理工作代码
+  normalize_transactions.py       # 统一 normalized 中间层构建入口
+  ledger_build.py                 # 最终账本 ledger 构建入口
+  ledger_review_export.py         # 账本人工校核 Excel 导出入口
   src/localai/
     entrypoints.py           # 入口脚本公共启动辅助
     logging_config.py        # 统一日志配置
@@ -412,6 +415,78 @@ processed_data/normalized/bank_transactions_quality_report.md
 ```
 
 整理过程会按统一 schema 标准化金额、方向、账户尾号、来源引用等字段，并在 normalized 层做去重合并。每条去重后的记录会保留 `source_records`，用于回查原始邮件、附件、PDF 或 Excel 行。邮件正文候选通常缺交易时间和账户信息，当前按低置信度来源进入质量报告；已成功解密的 PDF/XLS 附件是第一阶段更可靠的流水来源。
+
+## 归一化、账本与人工校核
+
+银行流水、订单截图 AI JSON 等结构化结果可以统一汇总到 normalized 中间层：
+
+```powershell
+python normalize_transactions.py
+```
+
+默认输出：
+
+```text
+processed_data/normalized/bank_transactions.jsonl
+processed_data/normalized/orders.jsonl
+processed_data/normalized/financial_transactions.jsonl
+processed_data/normalized/financial_transaction_links.jsonl
+processed_data/normalized/normalized_quality_report.md
+```
+
+其中 `financial_transactions` 是财务事实中间层，包含银行/支付流水事实和订单事实；`financial_transaction_links` 保存订单与付款流水的强关联或候选关联。最终账本以银行/支付流水为主来源，订单只用于补充购物、外卖、平台服务等明细，避免同一笔消费重复统计。
+
+构建最终账本：
+
+```powershell
+python ledger_build.py
+```
+
+默认读取：
+
+```text
+processed_data/normalized/financial_transactions.jsonl
+processed_data/normalized/financial_transaction_links.jsonl
+```
+
+默认输出：
+
+```text
+processed_data/ledger/ledger_entries.jsonl
+processed_data/ledger/ledger_entries.json
+processed_data/ledger/ledger_quality_report.md
+```
+
+账本字段包含日期、年月、收支类型、金额、一级/二级/三级分类、目标人、项目、标签、商户/对象、支付方式、原始摘要、订单补充明细、来源流水 ID、置信度和人工复核标记。信用卡还款、账户互转、投资买卖等会进入账本明细，但默认不计入普通消费支出统计。
+
+导出人工校核 Excel：
+
+```powershell
+python ledger_review_export.py
+```
+
+默认输出：
+
+```text
+processed_data/review/ledger_review.xlsx
+```
+
+Excel 按月份分 sheet，每个 sheet 内按日期升序排列；缺日期记录会单独进入 `缺日期` sheet。每行保留机器分类、分类理由、问题提示和订单补充明细，并预留人工修正列：
+
+```text
+人工收支类型
+人工一级分类
+人工二级分类
+人工三级分类
+人工目标人
+人工项目
+人工标签
+人工是否报销
+人工预算状态
+人工备注
+```
+
+人工校核时建议只填写 `人工...` 列，不直接覆盖机器分类列。后续可通过导入脚本读取这些人工修正，生成 `processed_data/ledger/manual_overrides.json`，并在下一次构建账本时优先应用人工修正。
 
 ## GitHub 同步
 
