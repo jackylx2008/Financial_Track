@@ -2,6 +2,7 @@
 # Private files like yaml output input
 raw_data/ 
 data/
+processed_data/
 output/
 input/
 vendor/

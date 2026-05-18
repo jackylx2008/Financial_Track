@@ -12,7 +12,7 @@
   --config               配置文件路径，默认 `config.yaml`。
   --email-records        流水邮件记录 JSONL 路径，默认 `raw_data/financial_email/financial_email_records.jsonl`。
   --attachment-manifest  附件提取清单路径，默认 `raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json`。
-  --output-dir           归一化流水输出目录，默认 `raw_data/normalized`。
+  --output-dir           归一化流水输出目录，默认 `processed_data/normalized`。
 
 示例：
   python financial_email_bot.py --stage normalize
@@ -54,7 +54,7 @@ def parse_args() -> argparse.Namespace:
         default="raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json",
         help="Path to attachment_extract_manifest.json.",
     )
-    parser.add_argument("--output-dir", default="raw_data/normalized", help="Output directory.")
+    parser.add_argument("--output-dir", default="processed_data/normalized", help="Output directory.")
     return parser.parse_args()
 
 

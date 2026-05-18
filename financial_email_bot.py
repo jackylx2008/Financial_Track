@@ -55,7 +55,7 @@ from localai.entrypoints import bootstrap_context, print_json
 from localai.flows.financial_attachment_extract import run as run_attachment_extract
 from localai.flows.financial_attachment_prepare import run as run_attachment_prepare
 from localai.flows.financial_email_ingest import run as run_email_ingest
-from localai.flows.bank_transaction_consolidate import run as run_transaction_consolidate
+from localai.flows.transaction_normalize import run as run_transaction_normalize
 from localai.modules.financial_email_config import FinancialEmailConfig
 
 
@@ -106,7 +106,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--normalized-output-dir",
-        default="raw_data/normalized",
+        default="processed_data/normalized",
         help="Output directory for normalized bank transactions.",
     )
     parser.add_argument(
@@ -221,16 +221,19 @@ def run_extract_stage(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:
 
 def run_normalize_stage(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:
     logger.info(
-        "Resolved bank transaction normalize job: records=%s attachment_manifest=%s output_dir=%s",
+        "Resolved financial email normalize job: records=%s attachment_manifest=%s output_dir=%s",
         args.records,
         args.attachment_manifest,
         args.normalized_output_dir,
     )
-    return run_transaction_consolidate(
+    return run_transaction_normalize(
         ctx=ctx,
+        sources=["bank"],
+        output_dir=args.normalized_output_dir,
         email_records_path=args.records,
         attachment_manifest_path=args.attachment_manifest,
-        output_dir=args.normalized_output_dir,
+        order_json_root="raw_data/order_json",
+        order_platforms=[],
     )
 
 

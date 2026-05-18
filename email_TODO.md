@@ -70,9 +70,9 @@ raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 默认输出：
 
 ```text
-raw_data/normalized/bank_transactions.jsonl
-raw_data/normalized/bank_transactions.json
-raw_data/normalized/bank_transactions_quality_report.md
+processed_data/normalized/bank_transactions.jsonl
+processed_data/normalized/bank_transactions.json
+processed_data/normalized/bank_transactions_quality_report.md
 ```
 
 当前 schema 重点字段：
@@ -228,7 +228,7 @@ raw_data/normalized/bank_transactions_quality_report.md
 下一次继续时先看：
 
 ```text
-raw_data/normalized/bank_transactions_quality_report.md
+processed_data/normalized/bank_transactions_quality_report.md
 ```
 
 然后按影响面选择一个最值得补的 parser。建议优先顺序：

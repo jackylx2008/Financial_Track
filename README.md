@@ -29,6 +29,7 @@ Financial_Track/
   config.yaml                # 项目运行配置
   common.env.example         # 本地环境变量模板
   raw_data/                  # 本地采集数据，已被 git 忽略
+  processed_data/            # 归一化、中间层和审核输出，已被 git 忽略
   log/                       # 运行日志，已被 git 忽略
 ```
 
@@ -75,7 +76,7 @@ log/order_image_ai.log
 log/financial_email_bot.log
 ```
 
-`common.env`、`financial_attachment_passwords.env`、`raw_data/`、`log/`、`vendor/` 等本地文件或运行产物不应提交到 git。
+`common.env`、`financial_attachment_passwords.env`、`raw_data/`、`processed_data/`、`log/`、`vendor/` 等本地文件或运行产物不应提交到 git。
 
 安卓订单截图需要 ADB。可以使用 Android Platform Tools，也可以使用 MuMu 自带的 ADB：
 
@@ -291,7 +292,7 @@ log/order_image_ai.log
 
 ## 数据与隐私
 
-`raw_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
+`raw_data/`、`processed_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
 
 当前安卓截图只是采集阶段，后续 OCR、AI 识别和订单级去重应基于这些截图继续扩展。
 
@@ -405,9 +406,9 @@ raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 默认输出：
 
 ```text
-raw_data/normalized/bank_transactions.jsonl
-raw_data/normalized/bank_transactions.json
-raw_data/normalized/bank_transactions_quality_report.md
+processed_data/normalized/bank_transactions.jsonl
+processed_data/normalized/bank_transactions.json
+processed_data/normalized/bank_transactions_quality_report.md
 ```
 
 整理过程会按统一 schema 标准化金额、方向、账户尾号、来源引用等字段，并在 normalized 层做去重合并。每条去重后的记录会保留 `source_records`，用于回查原始邮件、附件、PDF 或 Excel 行。邮件正文候选通常缺交易时间和账户信息，当前按低置信度来源进入质量报告；已成功解密的 PDF/XLS 附件是第一阶段更可靠的流水来源。

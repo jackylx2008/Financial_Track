@@ -85,9 +85,9 @@ python financial_email_bot.py --stage all
 raw_data/financial_email/financial_email_records.jsonl
 raw_data/financial_email/attachment_inventory.json
 raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
-raw_data/normalized/bank_transactions.jsonl
-raw_data/normalized/bank_transactions.json
-raw_data/normalized/bank_transactions_quality_report.md
+processed_data/normalized/bank_transactions.jsonl
+processed_data/normalized/bank_transactions.json
+processed_data/normalized/bank_transactions_quality_report.md
 ```
 
 ## 附件密码和破解
@@ -237,7 +237,7 @@ python meituan_order_bot.py --help
 下一次继续时，优先查看：
 
 ```text
-raw_data/normalized/bank_transactions_quality_report.md
+processed_data/normalized/bank_transactions_quality_report.md
 ```
 
 然后根据低置信度、缺字段、warnings 和解析失败样本决定要补哪个 parser。

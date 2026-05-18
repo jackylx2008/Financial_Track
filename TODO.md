@@ -1,279 +1,250 @@
-# TODO：原始订单数据整理
+# TODO：最终账本层与统计报表
+
+## 当前状态
+
+已完成的数据链路：
+
+- 原始数据目录：`raw_data/`
+  - 只保存不同渠道采集到的原始数据、附件、截图、邮件、AI JSON 等。
+- 归一化和财务中间层目录：`processed_data/normalized/`
+  - `bank_transactions.jsonl/json`
+  - `orders.jsonl/json`
+  - `financial_transactions.jsonl/json`
+  - `financial_transaction_links.jsonl/json`
+  - 质量报告和汇总报告。
+- 人工审核 Excel：`processed_data/review/financial_transactions_review.xlsx`
+
+当前已有能力：
+
+- 邮件附件、银行流水已经整理为统一银行流水 normalized 层。
+- PDD、Meituan 订单截图 AI JSON 已整理为统一订单 normalized 层。
+- 已建立 `financial_transactions` 财务事实中间层。
+- 已建立订单与银行付款的候选/强关联关系。
+- 已导出 Excel 供人工查看强关联、候选关联、未匹配订单、银行付款和财务事实。
+
+当前限制：
+
+- 订单不是所有支出的前提。
+- 银行流水中存在收入、转账、还款、退款、医院、餐饮、停车费等无订单场景。
+- 最终统计不能只依赖订单匹配，应以银行/支付流水为主账本，订单只用于补充购物或服务明细。
 
 ## 下一阶段目标
 
-把四个平台已经获取到的原始数据整理成统一、可校验、可去重的订单级中间数据层。
+建立最终账本层 `ledger`，用于按年月日统计收入、支出和分类明细。
 
-当前原始数据状态：
-
-- 京东：已获取 PDF。
-- 淘宝：已获取 PDF。
-- 拼多多：已通过截图和本地 AI 识别生成 JSON。
-- 美团：已通过截图和本地 AI 识别生成 JSON。
-- 流水邮件：新增 IMAP 采集入口，可保存 `.eml`、正文、附件和候选交易 JSON。
-
-下一阶段不要先做分类、统计或报表。应先完成：
+目标输出：
 
 ```text
-JD/Taobao PDF + PDD/Meituan JSON
-  -> 统一订单 schema
-  -> 统一订单 JSONL/JSON
-  -> 去重和字段清洗
-  -> 质量报告
+processed_data/ledger/ledger_entries.jsonl
+processed_data/ledger/ledger_entries.json
+processed_data/ledger/ledger_quality_report.md
+processed_data/reports/ledger_report.xlsx
+```
 
-邮件流水建议并行建立“统一流水 schema”，不要强行塞入订单 schema：
+最终账本每条记录至少包含：
+
+- 日期
+- 年月
+- 类型：支出 / 收入 / 转账 / 退款 / 还款 / 未知
+- 金额
+- 收支方向
+- 一级分类
+- 二级分类
+- 花费项目
+- 对应人员
+- 具体服务或物品
+- 支付渠道
+- 商户 / 对方
+- 原始摘要
+- 是否匹配订单
+- 关联订单 ID
+- 来源流水 ID
+- 置信度
+- 是否需要人工复核
+- 备注
+
+## 设计原则
+
+1. 银行/支付流水是主账本来源。
+2. 订单记录只作为补充信息，用来丰富购物、外卖、平台服务类支出的具体物品或服务。
+3. 收入、转账、信用卡还款、账户互转不需要订单。
+4. 医院、餐饮、停车费、线下消费等无订单支出直接从银行流水摘要分类。
+5. 转账和还款默认不计入真实消费支出，避免统计失真。
+6. 自动分类必须保留置信度和复核标记。
+7. 所有账本条目必须能回溯到 normalized 层和原始数据。
+
+## 推荐代码结构
+
+新增入口：
 
 ```text
-Bank Email EML/Text/Attachment
-  -> 流水邮件 raw record
-  -> 候选交易流水 JSONL/JSON
-  -> 银行模板校验
-  -> 统一流水 schema
-```
+ledger_build.py
+ledger_report_export.py
 ```
 
-## 推荐执行顺序
-
-### 1. 定义统一订单 schema
-
-先建立所有平台共用的订单结构。
-
-建议字段：
-
-- `platform`
-- `source_type`
-- `source_file`
-- `source_page`
-- `source_image`
-- `order_id`
-- `order_time`
-- `merchant`
-- `title`
-- `spec`
-- `quantity`
-- `paid_amount`
-- `original_amount`
-- `shipping_fee`
-- `status`
-- `logistics`
-- `actions`
-- `is_partial`
-- `confidence`
-- `warnings`
-- `raw_record`
-
-邮件流水建议字段：
-
-- `source_type`
-- `source_file`
-- `body_text_file`
-- `attachment_files`
-- `message_uid`
-- `message_id`
-- `sent_at`
-- `from`
-- `subject`
-- `bank_key`
-- `bank_name`
-- `account_tail`
-- `transaction_time`
-- `direction`
-- `amount`
-- `currency`
-- `merchant`
-- `counterparty`
-- `balance`
-- `confidence`
-- `warnings`
-- `raw_record`
-
-注意：
-
-- 必须保留 `source_file` 和 `raw_record`，方便回查原始 PDF、截图或 AI 输出。
-- `source_type` 可先使用 `pdf`、`image_json`。
-- 金额、时间、空字段格式要在 schema 或 normalizer 中统一。
-
-### 2. 优先整理拼多多和美团 JSON
-
-拼多多、美团已经是 JSON，最适合先验证统一 schema、清洗和去重逻辑。
-
-需要实现：
-
-- 扫描 `raw_data/order_json/pdd/`。
-- 扫描 `raw_data/order_json/meituan/`。
-- 读取每张截图对应的 JSON。
-- 展开顶层 `orders`。
-- 为每条订单补充来源字段。
-- 标记异常字段，例如：
-  - 缺金额。
-  - 缺标题。
-  - 缺订单时间。
-  - 缺订单号。
-  - `is_partial=true`。
-  - `confidence` 低于阈值。
-  - 原 JSON 中存在 `warnings`。
-- 输出统一订单列表。
-
-### 3. 实现订单去重和合并
-
-拼多多、美团截图之间存在重叠，必须先处理重复订单。
-
-去重规则建议：
-
-1. 有 `order_id` 时，使用 `platform + order_id`。
-2. 无 `order_id` 时，使用 `platform + merchant + title + paid_amount + order_time`。
-3. 如果一条完整记录和一条 `is_partial=true` 记录高度相似，保留完整记录。
-4. 如果两条记录互补，可以合并字段。
-5. 合并后保留来源列表，便于追踪订单来自哪些截图或 JSON 文件。
-
-### 4. 输出统一结果和质量报告
-
-建议输出目录：
+新增 flow：
 
 ```text
-raw_data/normalized/
+src/localai/flows/ledger_build.py
+src/localai/flows/ledger_report_export.py
 ```
 
-建议输出文件：
+新增 modules：
 
 ```text
-raw_data/normalized/orders.jsonl
-raw_data/normalized/orders.json
-raw_data/normalized/quality_report.md
+src/localai/modules/ledger_schema.py
+src/localai/modules/ledger_builder.py
+src/localai/modules/ledger_category_rules.py
+src/localai/modules/ledger_person_rules.py
+src/localai/modules/ledger_order_enricher.py
+src/localai/modules/ledger_quality_report.py
+src/localai/modules/ledger_report_workbook.py
 ```
 
-质量报告至少包含：
+职责：
 
-- 各平台读取的原始文件数量。
-- 各平台解析出的订单数量。
-- 去重前订单数量。
-- 去重后订单数量。
-- 缺金额数量。
-- 缺标题数量。
-- 缺时间数量。
-- 缺订单号数量。
-- `is_partial=true` 数量。
-- 低置信度订单数量。
-- 解析失败文件列表。
-- 需要人工复核的来源文件列表。
+- `ledger_schema.py`
+  - 定义最终账本字段、默认值、金额和日期格式。
+- `ledger_builder.py`
+  - 从 `financial_transactions` 和 `financial_transaction_links` 生成账本条目。
+- `ledger_category_rules.py`
+  - 关键词分类规则。
+- `ledger_person_rules.py`
+  - 对应人员识别规则，第一版可默认空或 `unknown`。
+- `ledger_order_enricher.py`
+  - 使用已匹配订单补充具体物品/服务。
+- `ledger_quality_report.py`
+  - 输出缺分类、缺人员、未知类型、低置信度、需复核统计。
+- `ledger_report_workbook.py`
+  - 输出最终 Excel 报表。
 
-### 5. 再处理京东 PDF
+## 第一阶段实现范围
 
-京东 PDF 先尝试文本解析。
+先实现规则分类，不接入 AI。
 
-建议路线：
-
-1. 使用 `PyMuPDF` 或 `pdfplumber` 提取 PDF 文本。
-2. 判断京东 PDF 文本是否包含稳定的订单字段。
-3. 如果文本稳定，写京东 PDF parser。
-4. 如果文本不稳定，把 PDF 页面渲染成图片，复用本地 AI 视觉识别流程。
-5. 输出同一套统一订单 schema。
-
-### 6. 最后处理淘宝 PDF
-
-淘宝 PDF 可能更依赖浏览器打印版式，稳定性可能弱于京东。
-
-建议路线：
-
-1. 先尝试文本解析。
-2. 如果字段顺序或版式不稳定，走 PDF 页面转图片。
-3. 复用本地 AI 视觉识别流程识别页面中的订单。
-4. 输出同一套统一订单 schema。
-
-## 建议新增代码结构
-
-沿用当前项目“入口脚本 + flows + modules”的结构。
-
-建议新增：
+输入：
 
 ```text
-consolidate_orders.py
-src/localai/flows/order_raw_consolidate.py
-src/localai/modules/order_schema.py
-src/localai/modules/order_json_reader.py
-src/localai/modules/pdf_order_extractor.py
-src/localai/modules/order_normalizer.py
-src/localai/modules/order_deduper.py
-src/localai/modules/order_quality_report.py
+processed_data/normalized/financial_transactions.jsonl
+processed_data/normalized/financial_transaction_links.jsonl
 ```
 
-职责划分：
+输出：
 
-- `consolidate_orders.py`
-  - 根目录入口脚本。
-  - 负责读取命令行参数、加载配置、调用 flow、打印结果摘要。
-- `order_raw_consolidate.py`
-  - 负责组织“读取 -> 标准化 -> 去重 -> 输出 -> 报告”的完整流程。
-- `order_schema.py`
-  - 定义统一订单字段、默认值和必要的类型转换。
-- `order_json_reader.py`
-  - 读取拼多多、美团 AI JSON，转换为标准订单草稿。
-- `pdf_order_extractor.py`
-  - 后续承接京东、淘宝 PDF 解析或 PDF 转图片识别。
-- `order_normalizer.py`
-  - 统一金额、时间、空字段、warnings、source 信息。
-- `order_deduper.py`
-  - 负责订单级去重、相似记录合并、来源追踪。
-- `order_quality_report.py`
-  - 生成 Markdown 质量报告和统计摘要。
+```text
+processed_data/ledger/ledger_entries.jsonl
+processed_data/ledger/ledger_entries.json
+processed_data/ledger/ledger_quality_report.md
+```
 
-## 第一轮实现范围
+第一版分类规则：
 
-第一轮不要一次性处理四个平台 PDF 和 JSON。建议范围收窄为：
+- 医疗
+  - 关键词：医院、门诊、挂号、药房、药店、医保、体检、诊所。
+- 餐饮
+  - 关键词：餐饮、饭店、餐厅、咖啡、奶茶、美团外卖、饿了么、麦当劳、肯德基。
+- 停车 / 交通
+  - 关键词：停车、停车场、ETCP、高速、地铁、公交、打车、滴滴。
+- 购物
+  - 关键词：淘宝、天猫、拼多多、京东、抖音商城、支付宝-商户、财付通-平台商户。
+- 生活服务
+  - 关键词：物业、水费、电费、燃气、话费、宽带、充值。
+- 住房
+  - 关键词：房租、租金、物业费、供暖。
+- 收入
+  - 关键词：工资、薪资、奖金、报销、入账、利息。
+- 退款
+  - 关键词：退款、退货、返现、冲正。
+- 转账 / 还款
+  - 关键词：转账、账户互转、信用卡还款、还款、借记卡还款。
+- 未分类
+  - 无规则命中或冲突时进入人工复核。
 
-1. 新增统一 schema。
-2. 读取拼多多 JSON。
-3. 读取美团 JSON。
-4. 标准化字段。
-5. 去重。
-6. 输出 `orders.jsonl`。
-7. 输出 `quality_report.md`。
+## 第二阶段 Excel 报表
 
-第一轮暂不实现：
+新增：
 
-- 京东 PDF 解析。
-- 淘宝 PDF 解析。
-- 订单分类。
-- Excel 写入。
-- 报表统计。
+```text
+python ledger_report_export.py
+```
+
+输出：
+
+```text
+processed_data/reports/ledger_report.xlsx
+```
+
+Excel sheet 建议：
+
+- `总览`
+- `按月收支`
+- `按日收支`
+- `支出分类汇总`
+- `收入分类汇总`
+- `人员汇总`
+- `账本明细`
+- `需人工复核`
+- `转账还款`
+- `订单补充明细`
+
+格式要求：
+
+- 自动列宽。
+- 首行冻结。
+- 自动筛选。
+- 金额列可排序求和。
+- 支出、收入、转账、退款用不同底色。
+- `需人工复核` sheet 重点列出未分类、低置信度、疑似转账误判、金额或时间缺失记录。
+
+## 第三阶段人工复核闭环
+
+在 Excel 中预留人工修正列：
+
+- 人工类型
+- 人工一级分类
+- 人工二级分类
+- 人工对应人员
+- 人工花费项目
+- 人工具体服务或物品
+- 人工备注
+
+后续新增回读脚本：
+
+```text
+ledger_review_import.py
+```
+
+目标：
+
+- 读取人工修正后的 Excel。
+- 生成 `processed_data/ledger/manual_overrides.json`。
+- 下一次构建账本时优先应用人工修正。
 
 ## 验收标准
 
-第一轮完成时应满足：
+第一阶段完成后：
 
 - 可以运行：
 
 ```powershell
-python consolidate_orders.py --platform pdd --platform meituan
+python ledger_build.py
 ```
 
-- 能从默认目录读取：
+- 能生成 `processed_data/ledger/ledger_entries.jsonl`。
+- 银行收入、支出、转账、退款能够分开。
+- 没有订单的医院、餐饮、停车费等支出也能进入账本。
+- 已匹配订单的购物/服务支出能补充具体物品或服务。
+- 转账和还款不计入消费支出统计。
+- 所有条目保留来源 ID，可回查到 `financial_transactions` 和原始流水。
 
-```text
-raw_data/order_json/pdd/
-raw_data/order_json/meituan/
+第二阶段完成后：
+
+- 可以运行：
+
+```powershell
+python ledger_report_export.py
 ```
 
-- 能输出：
-
-```text
-raw_data/normalized/orders.jsonl
-raw_data/normalized/orders.json
-raw_data/normalized/quality_report.md
-```
-
-- 输出订单中每条记录都包含统一 schema 字段。
-- 每条记录都能回溯到原始 JSON 文件和截图名。
-- 去重前后数量清楚。
-- 缺字段、低置信度、截断订单会进入质量报告。
-- 不读取或提交任何真实隐私数据到版本库。
-
-## 后续扩展顺序
-
-完成第一轮后，再继续：
-
-1. 为京东 PDF 增加解析能力。
-2. 为淘宝 PDF 增加解析能力。
-3. 为流水邮件增加具体来源模板 parser，把 `candidate_transactions` 转成统一流水 schema。
-4. 如果 PDF 文本解析不稳定，则实现 PDF 转图片并复用本地 AI 视觉识别。
-5. 四个平台订单和银行流水全部进入统一 JSONL 后，再做消费分类、汇总统计和 Excel 输出。
+- 能生成 `processed_data/reports/ledger_report.xlsx`。
+- Excel 可以直接按年月日、分类、人员、项目查看收入和支出。
+- `需人工复核` sheet 能明确列出需要人工处理的记录。
