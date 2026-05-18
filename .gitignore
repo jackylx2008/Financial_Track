@@ -1,5 +1,6 @@
 ## Python.gitignore
 # Private files like yaml output input
+.DS_Store
 raw_data/ 
 data/
 processed_data/
