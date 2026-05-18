@@ -13,7 +13,7 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
-from localai.modules.bank_email_config import BankEmailConfig
+from localai.modules.financial_email_config import FinancialEmailConfig
 
 
 AMOUNT_RE = re.compile(
@@ -31,8 +31,8 @@ OUTFLOW_KEYWORDS = ("支出", "消费", "付款", "扣款", "转出", "还款", 
 INFLOW_KEYWORDS = ("收入", "入账", "退款", "转入", "存入", "收款")
 
 
-class BankEmailParser:
-    def __init__(self, config: BankEmailConfig) -> None:
+class FinancialEmailParser:
+    def __init__(self, config: FinancialEmailConfig) -> None:
         self.config = config
         self.eml_dir = config.output_dir / "eml"
         self.body_dir = config.output_dir / "body"

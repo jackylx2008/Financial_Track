@@ -8,9 +8,9 @@ from pathlib import Path
 from typing import Any
 
 from localai.context import AppContext
-from localai.modules.bank_email_config import BankEmailConfig
-from localai.modules.bank_email_imap import BankEmailImapClient
-from localai.modules.bank_email_parser import BankEmailParser
+from localai.modules.financial_email_config import FinancialEmailConfig
+from localai.modules.financial_email_imap import FinancialEmailImapClient
+from localai.modules.financial_email_parser import FinancialEmailParser
 
 
 logger = logging.getLogger(__name__)
@@ -20,11 +20,11 @@ PROGRESS_LOG_EVERY_MESSAGES = 20
 SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
 
 
-def run(ctx: AppContext, config: BankEmailConfig) -> dict[str, Any]:
+def run(ctx: AppContext, config: FinancialEmailConfig) -> dict[str, Any]:
     output_dir = config.output_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    parser = BankEmailParser(config=config)
+    parser = FinancialEmailParser(config=config)
     raw_messages = _read_local_eml_files(config) if config.eml_dir else _fetch_imap_messages(config)
 
     records: list[dict[str, Any]] = []
@@ -38,7 +38,7 @@ def run(ctx: AppContext, config: BankEmailConfig) -> dict[str, Any]:
         try:
             record = parser.parse_and_save(raw_message=raw_message, index=index)
         except Exception:
-            logger.exception("Failed parsing bank email message index=%s uid=%s", index, raw_message.get("uid"))
+            logger.exception("Failed parsing financial email message index=%s uid=%s", index, raw_message.get("uid"))
             failed.append({"index": str(index), "uid": str(raw_message.get("uid", ""))})
             record = None
             parse_failed = True
@@ -51,7 +51,7 @@ def run(ctx: AppContext, config: BankEmailConfig) -> dict[str, Any]:
         if _should_log_progress(index, now, last_progress_at, total):
             last_progress_at = now
             logger.info(
-                "Parsed bank email messages %s/%s matched=%s skipped=%s elapsed=%.1fs",
+                "Parsed financial email messages %s/%s matched=%s skipped=%s elapsed=%.1fs",
                 index,
                 total,
                 len(records),
@@ -72,7 +72,7 @@ def run(ctx: AppContext, config: BankEmailConfig) -> dict[str, Any]:
         "records_json": str(paths["json"]),
         "summary_markdown": str(paths["summary"]),
     }
-    logger.info("Finished bank email ingest: %s", summary)
+    logger.info("Finished financial email ingest: %s", summary)
     return summary
 
 
@@ -85,14 +85,14 @@ def _should_log_progress(done: int, now: float, last_progress_at: float, total: 
     )
 
 
-def _fetch_imap_messages(config: BankEmailConfig) -> list[dict[str, Any]]:
+def _fetch_imap_messages(config: FinancialEmailConfig) -> list[dict[str, Any]]:
     if not config.host or not config.user or not config.password:
         raise RuntimeError("Bank email IMAP host, user and password are required unless --eml-dir is used.")
-    with BankEmailImapClient(config) as client:
+    with FinancialEmailImapClient(config) as client:
         return client.fetch_messages()
 
 
-def _read_local_eml_files(config: BankEmailConfig) -> list[dict[str, Any]]:
+def _read_local_eml_files(config: FinancialEmailConfig) -> list[dict[str, Any]]:
     assert config.eml_dir is not None
     eml_dir = config.eml_dir
     if not eml_dir.exists():
@@ -112,9 +112,9 @@ def _read_local_eml_files(config: BankEmailConfig) -> list[dict[str, Any]]:
 
 
 def _write_outputs(output_dir: Path, records: list[dict[str, Any]], skipped: int, failed: list[dict[str, str]]) -> dict[str, Path]:
-    jsonl_path = output_dir / "bank_email_records.jsonl"
-    json_path = output_dir / "bank_email_records.json"
-    summary_path = output_dir / "bank_email_summary.md"
+    jsonl_path = output_dir / "financial_email_records.jsonl"
+    json_path = output_dir / "financial_email_records.json"
+    summary_path = output_dir / "financial_email_summary.md"
 
     with jsonl_path.open("w", encoding="utf-8") as file:
         for record in records:
@@ -147,7 +147,7 @@ def _build_summary_markdown(records: list[dict[str, Any]], skipped: int, failed:
         attachment_count += len(record.get("attachment_files", []))
 
     lines = [
-        "# 银行邮件流水采集摘要",
+        "# 邮件流水采集摘要",
         "",
         f"- 匹配邮件数：{len(records)}",
         f"- 跳过邮件数：{skipped}",
@@ -172,7 +172,7 @@ def _build_summary_markdown(records: list[dict[str, Any]], skipped: int, failed:
             "",
             "- `.eml`、正文文本和附件保存在本地 `raw_data/` 下，不应提交到版本库。",
             "- `candidate_transactions` 是正则抽取的候选流水，后续仍需要按银行模板校验。",
-            "- 如某家银行邮件格式稳定，应新增专用 parser，而不是只依赖通用金额正则。",
+            "- 如某类流水邮件格式稳定，应新增专用 parser，而不是只依赖通用金额正则。",
         ]
     )
     return "\n".join(lines) + "\n"

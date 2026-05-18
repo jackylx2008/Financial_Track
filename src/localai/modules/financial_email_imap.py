@@ -6,7 +6,7 @@ import time
 from datetime import datetime
 from typing import Any
 
-from localai.modules.bank_email_config import BankEmailConfig
+from localai.modules.financial_email_config import FinancialEmailConfig
 
 
 logger = logging.getLogger(__name__)
@@ -15,12 +15,12 @@ PROGRESS_LOG_INTERVAL_SEC = 10
 PROGRESS_LOG_EVERY_MESSAGES = 20
 
 
-class BankEmailImapClient:
-    def __init__(self, config: BankEmailConfig) -> None:
+class FinancialEmailImapClient:
+    def __init__(self, config: FinancialEmailConfig) -> None:
         self.config = config
         self._client: imaplib.IMAP4_SSL | None = None
 
-    def __enter__(self) -> "BankEmailImapClient":
+    def __enter__(self) -> "FinancialEmailImapClient":
         logger.info("Connecting to IMAP host=%s port=%s user=%s", self.config.host, self.config.port, self.config.user)
         self._client = imaplib.IMAP4_SSL(self.config.host, self.config.port, timeout=30)
         self._client.login(self.config.user, self.config.password)

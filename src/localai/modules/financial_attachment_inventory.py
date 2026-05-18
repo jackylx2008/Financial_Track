@@ -5,7 +5,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-from localai.modules.bank_attachment_passwords import AttachmentPasswordStore
+from localai.modules.financial_attachment_passwords import AttachmentPasswordStore
 
 
 PDF_ENCRYPT_MARKER = b"/Encrypt"

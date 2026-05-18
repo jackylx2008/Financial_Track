@@ -38,8 +38,8 @@ raw_data/order_capture/screenshots/
 项目根目录提供了通用安卓订单截图入口，支持拼多多和美团：
 
 ```powershell
-python android_order_bot.py pdd capture --device 10CF8C17KP004G0
-python android_order_bot.py meituan capture --device 10CF8C17KP004G0
+python pdd_order_bot.py capture --device 10CF8C17KP004G0
+python meituan_order_bot.py capture --device 10CF8C17KP004G0
 ```
 
 默认输出目录：
@@ -86,7 +86,7 @@ python meituan_order_bot.py capture-scroll --device 10CF8C17KP004G0 --pages 5 --
 `capture-scroll` 会先截取当前页面，然后上滑，再等待 `--wait` 秒，直到保存 `--pages` 张截图。默认滑动参数适合常见 1080 宽安卓屏幕；如果滑动距离不合适，可以调整：
 
 ```powershell
-python android_order_bot.py meituan capture-scroll --device 10CF8C17KP004G0 --pages 5 --start-x 540 --start-y 1700 --end-x 540 --end-y 500 --duration-ms 600
+python meituan_order_bot.py capture-scroll --device 10CF8C17KP004G0 --pages 5 --start-x 540 --start-y 1700 --end-x 540 --end-y 500 --duration-ms 600
 ```
 
 不知道总页数时，使用自动到底模式：
@@ -103,7 +103,7 @@ python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pag
 如果停止太早，可以提高阈值或增大滑动距离：
 
 ```powershell
-python android_order_bot.py meituan capture-until-end --device 10CF8C17KP004G0 --max-pages 50 --stable-threshold 0.998 --start-y 1800 --end-y 450
+python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 50 --stable-threshold 0.998 --start-y 1800 --end-y 450
 ```
 
 如果希望恢复旧行为，检测到画面不变时直接停止：

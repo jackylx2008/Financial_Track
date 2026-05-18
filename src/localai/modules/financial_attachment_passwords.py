@@ -28,10 +28,10 @@ class AttachmentPasswordStore:
     def from_env_file(cls, env_path: Path) -> "AttachmentPasswordStore":
         values = _read_env_file(env_path)
         return cls(
-            default_passwords=_password_list(values.get("BANK_ATTACHMENT_PASSWORD_DEFAULT", "")),
-            by_bank=_json_password_map(values.get("BANK_ATTACHMENT_PASSWORD_BY_BANK_JSON", "{}")),
-            by_filename=_lower_keys(_json_password_map(values.get("BANK_ATTACHMENT_PASSWORD_BY_FILENAME_JSON", "{}"))),
-            by_pattern=_json_password_map(values.get("BANK_ATTACHMENT_PASSWORD_BY_PATTERN_JSON", "{}")),
+            default_passwords=_password_list(values.get("FINANCIAL_ATTACHMENT_PASSWORD_DEFAULT", "")),
+            by_bank=_json_password_map(values.get("FINANCIAL_ATTACHMENT_PASSWORD_BY_BANK_JSON", "{}")),
+            by_filename=_lower_keys(_json_password_map(values.get("FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON", "{}"))),
+            by_pattern=_json_password_map(values.get("FINANCIAL_ATTACHMENT_PASSWORD_BY_PATTERN_JSON", "{}")),
             by_type=_normalize_type_keys(_type_password_map(values)),
         )
 
@@ -121,11 +121,11 @@ def _lower_keys(value: dict[str, list[str]]) -> dict[str, list[str]]:
 
 
 def _type_password_map(values: dict[str, str]) -> dict[str, list[str]]:
-    result = _json_password_map(values.get("BANK_ATTACHMENT_PASSWORD_BY_TYPE_JSON", "{}"))
-    if "BANK_ATTACHMENT_PDF_PWD" in values:
-        result.setdefault("pdf", _password_list(values["BANK_ATTACHMENT_PDF_PWD"]))
-    if "BANK_ATTACHMENT_ZIP_PWD" in values:
-        result.setdefault("zip", _password_list(values["BANK_ATTACHMENT_ZIP_PWD"]))
+    result = _json_password_map(values.get("FINANCIAL_ATTACHMENT_PASSWORD_BY_TYPE_JSON", "{}"))
+    if "FINANCIAL_ATTACHMENT_PDF_PWD" in values:
+        result.setdefault("pdf", _password_list(values["FINANCIAL_ATTACHMENT_PDF_PWD"]))
+    if "FINANCIAL_ATTACHMENT_ZIP_PWD" in values:
+        result.setdefault("zip", _password_list(values["FINANCIAL_ATTACHMENT_ZIP_PWD"]))
     return result
 
 

@@ -39,24 +39,24 @@ llamacpp:
   stdout_log_path: ${LLAMACPP_STDOUT_LOG_PATH:-./log/llama_server.out.log}
   stderr_log_path: ${LLAMACPP_STDERR_LOG_PATH:-./log/llama_server.err.log}
 
-bank_email:
-  output_dir: ${BANK_EMAIL_OUTPUT_DIR:-./raw_data/email_bank}
-  mailbox: ${BANK_EMAIL_MAILBOX:-INBOX}
-  since: ${BANK_EMAIL_SINCE:-2024-01-01}
-  before: ${BANK_EMAIL_BEFORE:-}
-  max_messages: ${BANK_EMAIL_MAX_MESSAGES:-200}
-  subject_keywords: ${BANK_EMAIL_SUBJECT_KEYWORDS_JSON:-["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]}
+financial_email:
+  output_dir: ${FINANCIAL_EMAIL_OUTPUT_DIR:-./raw_data/financial_email}
+  mailbox: ${FINANCIAL_EMAIL_MAILBOX:-INBOX}
+  since: ${FINANCIAL_EMAIL_SINCE:-2024-01-01}
+  before: ${FINANCIAL_EMAIL_BEFORE:-}
+  max_messages: ${FINANCIAL_EMAIL_MAX_MESSAGES:-200}
+  subject_keywords: ${FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON:-["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]}
   imap:
-    host: ${BANK_EMAIL_IMAP_HOST:-imap.126.com}
-    port: ${BANK_EMAIL_IMAP_PORT:-993}
-    user: ${BANK_EMAIL_IMAP_USER:-}
-    password: ${BANK_EMAIL_IMAP_PASSWORD:-}
-    support_email: ${BANK_EMAIL_CLIENT_SUPPORT_EMAIL:-support@example.invalid}
+    host: ${FINANCIAL_EMAIL_IMAP_HOST:-imap.126.com}
+    port: ${FINANCIAL_EMAIL_IMAP_PORT:-993}
+    user: ${FINANCIAL_EMAIL_IMAP_USER:-}
+    password: ${FINANCIAL_EMAIL_IMAP_PASSWORD:-}
+    support_email: ${FINANCIAL_EMAIL_CLIENT_SUPPORT_EMAIL:-support@example.invalid}
     client_id:
       name: FinancialTrack
       version: "1.0"
       vendor: local-python
-      support-email: ${BANK_EMAIL_CLIENT_SUPPORT_EMAIL:-support@example.invalid}
+      support-email: ${FINANCIAL_EMAIL_CLIENT_SUPPORT_EMAIL:-support@example.invalid}
   rules:
     - bank_key: cmb
       bank_name: 招商银行
@@ -84,5 +84,11 @@ bank_email:
       subject_contains: ["中国银行", "中行", "交易", "账单"]
       body_contains: ["中国银行", "中行"]
 
-bank_attachments:
-  password_env_file: ${BANK_ATTACHMENT_PASSWORD_ENV_FILE:-./bank_attachment_passwords.env}
+financial_attachments:
+  password_env_file: ${FINANCIAL_ATTACHMENT_PASSWORD_ENV_FILE:-./financial_attachment_passwords.env}
+
+financial_attachment_cracker:
+  hashcat_path: ${FINANCIAL_ATTACHMENT_HASHCAT_PATH:-../hashcat/hashcat.exe}
+  zip2john_path: ${FINANCIAL_ATTACHMENT_ZIP2JOHN_PATH:-../john-1.9.0-jumbo-1-win64/run/zip2john.exe}
+  pdf2john_path: ${FINANCIAL_ATTACHMENT_PDF2JOHN_PATH:-../john-1.9.0-jumbo-1-win64/run/pdf2john.pl}
+  hashcat_extra_args: ${FINANCIAL_ATTACHMENT_HASHCAT_EXTRA_ARGS_JSON:-["--backend-ignore-cuda","--backend-ignore-hip"]}

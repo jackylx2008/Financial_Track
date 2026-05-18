@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import csv
 import re
+from io import StringIO
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ from localai.modules.bank_transaction_schema import make_transaction, parse_mone
 DATE_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 ACCOUNT_RE = re.compile(r"(?:卡号|账号|卡号/账号)[:： ]*([0-9*]{4,})")
+CARD_TAIL_RE = re.compile(r"\(([0-9*]{4,})\)")
 SIGNED_AMOUNT_RE = re.compile(r"^[+-]\d{1,3}(?:,\d{3})*(?:\.\d{2})$|^[+-]\d+(?:\.\d{2})$")
 
 
@@ -32,6 +35,8 @@ def read_attachment_transactions(manifest_path: Path) -> tuple[list[dict[str, An
                     transactions.extend(_read_pdf_transactions(path, item))
                 elif path.suffix.lower() == ".xls":
                     transactions.extend(_read_xls_transactions(path, item))
+                elif path.suffix.lower() == ".csv":
+                    transactions.extend(_read_csv_transactions(path, item))
             except Exception as exc:
                 failures.append(f"{path}: {exc}")
     return transactions, {"manifest_exists": True, "files_seen": files_seen, "transactions": len(transactions), "parse_failures": failures}
@@ -62,6 +67,124 @@ def _read_pdf_transactions(path: Path, manifest_item: dict[str, Any]) -> list[di
         if tx is not None:
             transactions.append(tx)
     return transactions
+
+
+def _read_csv_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
+    text = _read_csv_text(path)
+    rows = _read_dict_rows_from_text(text)
+    if not rows:
+        return []
+    headers = set(rows[0])
+    if {"交易时间", "交易分类", "交易对方", "收/支", "金额"}.issubset(headers):
+        return _read_alipay_csv_rows(path, manifest_item, rows)
+    if {"交易创建时间", "交易成功时间", "订单标题", "收/支", "实付金额"}.issubset(headers):
+        return _read_meituan_csv_rows(path, manifest_item, rows)
+    return []
+
+
+def _read_alipay_csv_rows(
+    path: Path, manifest_item: dict[str, Any], rows: list[dict[str, str]]
+) -> list[dict[str, Any]]:
+    transactions: list[dict[str, Any]] = []
+    for row_index, row in enumerate(rows, start=1):
+        amount = _clean_money(row.get("金额", ""))
+        if not parse_money_token(amount):
+            continue
+        direction = _direction_from_cn(row.get("收/支", ""))
+        transactions.append(
+            make_transaction(
+                bank_key="alipay",
+                bank_name="支付宝",
+                account_tail=_account_tail_from_text(row.get("收/付款方式", "")),
+                transaction_time=row.get("交易时间", "").strip(),
+                direction=direction,
+                amount=amount,
+                merchant=row.get("交易对方", "").strip(),
+                counterparty=row.get("交易对方", "").strip(),
+                summary=row.get("商品说明", "").strip() or row.get("交易分类", "").strip(),
+                channel=row.get("收/付款方式", "").strip(),
+                transaction_reference=row.get("交易订单号", "").strip(),
+                source_records=[
+                    {
+                        "source_type": "email_attachment_csv",
+                        "source_file": str(path),
+                        "message_uid": manifest_item.get("message_uid", ""),
+                        "message_id": manifest_item.get("message_id", ""),
+                        "row": row_index,
+                    }
+                ],
+                confidence=0.9,
+                raw_record=row,
+            )
+        )
+    return transactions
+
+
+def _read_meituan_csv_rows(
+    path: Path, manifest_item: dict[str, Any], rows: list[dict[str, str]]
+) -> list[dict[str, Any]]:
+    transactions: list[dict[str, Any]] = []
+    for row_index, row in enumerate(rows, start=1):
+        amount = _clean_money(row.get("实付金额", "") or row.get("订单金额", ""))
+        if not parse_money_token(amount):
+            continue
+        transactions.append(
+            make_transaction(
+                bank_key="meituan",
+                bank_name="美团",
+                account_tail=_account_tail_from_text(row.get("支付方式", "")),
+                transaction_time=(row.get("交易成功时间", "") or row.get("交易创建时间", "")).strip(),
+                direction=_direction_from_cn(row.get("收/支", "")),
+                amount=amount,
+                merchant=row.get("订单标题", "").strip(),
+                counterparty=row.get("订单标题", "").strip(),
+                summary=row.get("交易类型", "").strip(),
+                channel=row.get("支付方式", "").strip(),
+                transaction_reference=row.get("交易单号", "").strip(),
+                source_records=[
+                    {
+                        "source_type": "email_attachment_csv",
+                        "source_file": str(path),
+                        "message_uid": manifest_item.get("message_uid", ""),
+                        "message_id": manifest_item.get("message_id", ""),
+                        "row": row_index,
+                    }
+                ],
+                confidence=0.9,
+                raw_record=row,
+            )
+        )
+    return transactions
+
+
+def _read_csv_text(path: Path) -> str:
+    data = path.read_bytes()
+    best_text = ""
+    best_score = -1
+    for encoding in ("utf-8-sig", "gb18030", "gbk", "utf-16", "latin1"):
+        try:
+            decoded = data.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+        fixed = "\n".join(_fix_mojibake(line) for line in decoded.splitlines())
+        score = _score_cjk(fixed)
+        if score > best_score:
+            best_text = fixed
+            best_score = score
+    return best_text
+
+
+def _read_dict_rows_from_text(text: str) -> list[dict[str, str]]:
+    lines = [line for line in text.splitlines() if line.strip().strip('"')]
+    for index, line in enumerate(lines):
+        if "交易时间" not in line and "交易创建时间" not in line:
+            continue
+        reader = csv.DictReader(StringIO("\n".join(lines[index:])))
+        return [
+            {str(key or "").strip(): str(value or "").strip() for key, value in row.items()}
+            for row in reader
+        ]
+    return []
 
 
 def _parse_icbc_pdf_line(
@@ -178,6 +301,37 @@ def _account_tail_from_lines(lines: list[str]) -> str:
         if match:
             return match.group(1)[-4:]
     return ""
+
+
+def _account_tail_from_text(value: str) -> str:
+    match = CARD_TAIL_RE.search(value or "")
+    if match:
+        return match.group(1)[-4:]
+    match = ACCOUNT_RE.search(value or "")
+    if match:
+        return match.group(1)[-4:]
+    return ""
+
+
+def _direction_from_cn(value: str) -> str:
+    text = (value or "").strip()
+    if "收入" in text or text == "收":
+        return "inflow"
+    if "支出" in text or text == "支":
+        return "outflow"
+    return "unknown"
+
+
+def _clean_money(value: str) -> str:
+    return (
+        str(value or "")
+        .strip()
+        .replace("￥", "")
+        .replace("¥", "")
+        .replace("\xa5", "")
+        .replace("元", "")
+        .replace(",", "")
+    )
 
 
 def _format_yyyymmdd(value: str) -> str:

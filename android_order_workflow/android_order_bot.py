@@ -24,8 +24,8 @@
   --stable-threshold  判定页面不再变化的相似度阈值，默认 0.995。
 
 示例：
-  python android_order_bot.py pdd capture --device 10CF8C17KP004G0
-  python android_order_bot.py meituan capture-until-end --device 10CF8C17KP004G0
+  python pdd_order_bot.py capture --device 10CF8C17KP004G0
+  python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0
 
 输出：
   将 PNG 截图写入输出目录，并在控制台打印生成的截图路径、相似度和停止原因等运行信息。
@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import argparse
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,6 +43,10 @@ from pathlib import Path
 from typing import Sequence
 
 from PIL import Image, ImageChops, ImageStat
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from order_capture.capture_screen import (
     build_output_path,

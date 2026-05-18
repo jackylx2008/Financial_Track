@@ -27,7 +27,7 @@
 
 项目先搭建了基本工程结构：
 
-- 根目录入口脚本承接独立工作流，例如 `jd_pdf_bot.py`、`taobao_pdf_bot.py`、`android_order_bot.py`、`order_image_ai.py`。
+- 根目录入口脚本承接独立工作流，例如 `jd_pdf_bot.py`、`taobao_pdf_bot.py`、`pdd_order_bot.py`、`meituan_order_bot.py`、`order_image_ai.py`。
 - `order_capture/` 封装 ADB 截图能力。
 - `src/localai/modules/` 放置本地 AI、配置、JSON 解析等可复用模块。
 - `src/localai/flows/` 放置围绕具体任务的流程编排。
@@ -69,7 +69,7 @@
 
 ## 阶段四：拼多多和美团截图获取
 
-拼多多、美团链路由 `android_order_bot.py`、`pdd_order_bot.py`、`meituan_order_bot.py` 和 `order_capture/capture_screen.py` 实现。
+拼多多、美团链路由 `pdd_order_bot.py`、`meituan_order_bot.py`、`android_order_workflow/android_order_bot.py` 和 `order_capture/capture_screen.py` 实现。
 
 实现方式：
 
@@ -139,8 +139,8 @@
 | --- | --- | --- | --- |
 | 京东 | `jd_pdf_bot.py` | PDF | 待后续解析 |
 | 淘宝 | `taobao_pdf_bot.py` | PDF | 待后续解析 |
-| 拼多多 | `android_order_bot.py` / `pdd_order_bot.py` | PNG 截图 | JSON |
-| 美团 | `android_order_bot.py` / `meituan_order_bot.py` | PNG 截图 | JSON |
+| 拼多多 | `pdd_order_bot.py` | PNG 截图 | JSON |
+| 美团 | `meituan_order_bot.py` | PNG 截图 | JSON |
 
 ## 已形成的关键经验
 

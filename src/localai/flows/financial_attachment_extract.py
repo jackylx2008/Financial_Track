@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from localai.context import AppContext
-from localai.modules.bank_attachment_extractor import extract_attachment
-from localai.modules.bank_attachment_passwords import AttachmentPasswordStore
+from localai.modules.financial_attachment_extractor import extract_attachment
+from localai.modules.financial_attachment_passwords import AttachmentPasswordStore
 
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,8 @@ def run(ctx: AppContext, inventory_path: str | Path, password_env_path: str | Pa
     output_path = ctx.resolve_path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    section = ctx.config.get("bank_attachments", {})
-    configured_password_env = password_env_path or section.get("password_env_file", "./bank_attachment_passwords.env")
+    section = ctx.config.get("financial_attachments", {})
+    configured_password_env = password_env_path or section.get("password_env_file", "./financial_attachment_passwords.env")
     password_file = ctx.resolve_path(configured_password_env)
     password_store = AttachmentPasswordStore.from_env_file(password_file)
 
@@ -54,7 +54,7 @@ def run(ctx: AppContext, inventory_path: str | Path, password_env_path: str | Pa
         "manifest_json": str(manifest_path),
         "failures_markdown": str(failures_path),
     }
-    logger.info("Finished bank attachment extraction: %s", summary)
+    logger.info("Finished financial attachment extraction: %s", summary)
     return summary
 
 
@@ -70,7 +70,7 @@ def _read_inventory(path: Path) -> list[dict[str, Any]]:
 def _build_failures_markdown(results: list[dict[str, Any]]) -> str:
     failed = [item for item in results if item["status"] != "success"]
     lines = [
-        "# 银行附件解密/解压失败清单",
+        "# 邮件附件解密/解压失败清单",
         "",
         f"- 附件总数：{len(results)}",
         f"- 成功数：{sum(1 for item in results if item['status'] == 'success')}",

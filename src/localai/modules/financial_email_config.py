@@ -63,7 +63,7 @@ DEFAULT_SUBJECT_KEYWORDS = [
 
 
 @dataclass(frozen=True)
-class BankEmailConfig:
+class FinancialEmailConfig:
     host: str
     port: int
     user: str
@@ -82,11 +82,11 @@ class BankEmailConfig:
     rules: list[dict[str, Any]]
 
     @classmethod
-    def from_context(cls, ctx: AppContext, args: Any) -> "BankEmailConfig":
-        section = ctx.config.get("bank_email", {})
+    def from_context(cls, ctx: AppContext, args: Any) -> "FinancialEmailConfig":
+        section = ctx.config.get("financial_email", {})
         imap = section.get("imap", {})
 
-        output_dir = Path(args.output_dir or section.get("output_dir", "raw_data/email_bank"))
+        output_dir = Path(args.output_dir or section.get("output_dir", "raw_data/financial_email"))
         if not output_dir.is_absolute():
             output_dir = ctx.project_root / output_dir
 

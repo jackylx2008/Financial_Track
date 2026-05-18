@@ -10,7 +10,7 @@
 - 淘宝：已获取 PDF。
 - 拼多多：已通过截图和本地 AI 识别生成 JSON。
 - 美团：已通过截图和本地 AI 识别生成 JSON。
-- 银行邮件：新增 IMAP 采集入口，可保存 `.eml`、正文、附件和候选交易 JSON。
+- 流水邮件：新增 IMAP 采集入口，可保存 `.eml`、正文、附件和候选交易 JSON。
 
 下一阶段不要先做分类、统计或报表。应先完成：
 
@@ -21,11 +21,11 @@ JD/Taobao PDF + PDD/Meituan JSON
   -> 去重和字段清洗
   -> 质量报告
 
-银行邮件流水建议并行建立“统一流水 schema”，不要强行塞入订单 schema：
+邮件流水建议并行建立“统一流水 schema”，不要强行塞入订单 schema：
 
 ```text
 Bank Email EML/Text/Attachment
-  -> 银行邮件 raw record
+  -> 流水邮件 raw record
   -> 候选交易流水 JSONL/JSON
   -> 银行模板校验
   -> 统一流水 schema
@@ -62,7 +62,7 @@ Bank Email EML/Text/Attachment
 - `warnings`
 - `raw_record`
 
-银行邮件流水建议字段：
+邮件流水建议字段：
 
 - `source_type`
 - `source_file`
@@ -274,6 +274,6 @@ raw_data/normalized/quality_report.md
 
 1. 为京东 PDF 增加解析能力。
 2. 为淘宝 PDF 增加解析能力。
-3. 为银行邮件增加具体银行模板 parser，把 `candidate_transactions` 转成统一流水 schema。
+3. 为流水邮件增加具体来源模板 parser，把 `candidate_transactions` 转成统一流水 schema。
 4. 如果 PDF 文本解析不稳定，则实现 PDF 转图片并复用本地 AI 视觉识别。
 5. 四个平台订单和银行流水全部进入统一 JSONL 后，再做消费分类、汇总统计和 Excel 输出。

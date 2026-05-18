@@ -2,7 +2,7 @@
 """美团订单截图采集快捷入口
 
 用途：
-  作为 `android_order_bot.py` 的美团平台兼容入口，默认选择美团平台并复用 Android 订单截图采集流程。
+  作为美团平台入口，默认选择美团平台并复用 Android 订单截图采集流程实现。
 
 配置文件：
   本入口不读取 `config.yaml` 或 `.env`。ADB 路径优先使用 `--adb` 指定值，其次使用系统 PATH，
@@ -31,7 +31,7 @@
 
 from __future__ import annotations
 
-from android_order_bot import main
+from android_order_workflow.android_order_bot import main
 
 
 if __name__ == "__main__":

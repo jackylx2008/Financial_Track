@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from localai.context import AppContext
-from localai.modules.bank_attachment_reader import read_attachment_transactions
-from localai.modules.bank_email_record_reader import read_email_candidate_transactions
+from localai.modules.financial_attachment_reader import read_attachment_transactions
+from localai.modules.financial_email_record_reader import read_email_candidate_transactions
 from localai.modules.bank_transaction_deduper import dedupe_transactions
 from localai.modules.bank_transaction_quality_report import build_quality_report
 

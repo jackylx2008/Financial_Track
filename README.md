@@ -5,7 +5,7 @@
 - 京东、淘宝订单页面导出为 PDF。
 - 通过安卓手机 ADB 截取拼多多、美团订单页面截图，作为后续 OCR 和 AI 结构化识别的输入。
 - 调用本地 `llama.cpp` OpenAI 兼容接口，对订单截图做结构化识别。
-- 采集银行邮件、解密/解压账单附件，并整理为统一银行流水中间层。
+- 采集流水邮件、解密/解压账单附件，并整理为统一银行流水中间层。
 
 本项目面向个人账号自用，不包含平台逆向接口、抓包或绕过风控逻辑。
 
@@ -13,16 +13,14 @@
 
 ```text
 Financial_Track/
-  android_order_bot.py       # 安卓订单截图通用入口，支持 pdd/meituan
+  android_order_workflow/    # 安卓截图流水采集通用实现
   pdd_order_bot.py           # 拼多多截图兼容入口
   meituan_order_bot.py       # 美团截图入口
   order_capture/             # ADB 截图基础模块
   jd_pdf_bot.py              # 京东订单 PDF 导出
   taobao_pdf_bot.py          # 淘宝订单 PDF 辅助打印
-  bank_email_bot.py          # 银行邮件原始数据采集
-  bank_attachment_prepare.py # 银行附件密码匹配与清单生成
-  bank_attachment_extract.py # 银行附件解密/解压
-  consolidate_bank_transactions.py # 银行流水统一整理
+  financial_email_bot.py          # 流水邮件原始数据采集
+  financial_email_workflow/       # 邮件流水处理工作代码
   src/localai/
     entrypoints.py           # 入口脚本公共启动辅助
     logging_config.py        # 统一日志配置
@@ -74,10 +72,10 @@ CLOUDSTATION_ROOT_LINUX=~/CloudStation
 ```text
 log/ai_self_check.log
 log/order_image_ai.log
-log/bank_email_bot.log
+log/financial_email_bot.log
 ```
 
-`common.env`、`bank_attachment_passwords.env`、`raw_data/`、`log/`、`vendor/` 等本地文件或运行产物不应提交到 git。
+`common.env`、`financial_attachment_passwords.env`、`raw_data/`、`log/`、`vendor/` 等本地文件或运行产物不应提交到 git。
 
 安卓订单截图需要 ADB。可以使用 Android Platform Tools，也可以使用 MuMu 自带的 ADB：
 
@@ -109,8 +107,8 @@ cd "C:\Program Files\Netease\MuMu\nx_device\12.0\shell"
 通用入口支持拼多多和美团：
 
 ```powershell
-python android_order_bot.py pdd capture --device 10CF8C17KP004G0
-python android_order_bot.py meituan capture --device 10CF8C17KP004G0
+python pdd_order_bot.py capture --device 10CF8C17KP004G0
+python meituan_order_bot.py capture --device 10CF8C17KP004G0
 ```
 
 也可以使用平台专用入口：
@@ -297,30 +295,30 @@ log/order_image_ai.log
 
 当前安卓截图只是采集阶段，后续 OCR、AI 识别和订单级去重应基于这些截图继续扩展。
 
-## 银行邮件流水采集
+## 邮件流水采集
 
-银行交易提醒、信用卡账单等邮件可以作为另一类底层原始数据。项目提供 `bank_email_bot.py`，通过 IMAP 读取邮箱，把匹配到的银行邮件保存为本地原始产物：
+银行交易提醒、信用卡账单、支付平台账单等邮件可以作为另一类底层原始数据。项目提供 `financial_email_bot.py`，通过 IMAP 读取邮箱，把匹配到的流水邮件保存为本地原始产物：
 
 ```text
-raw_data/email_bank/eml/                  # 邮件原文 .eml
-raw_data/email_bank/body/                 # 抽取后的正文文本
-raw_data/email_bank/attachments/          # 邮件附件
-raw_data/email_bank/bank_email_records.jsonl
-raw_data/email_bank/bank_email_records.json
-raw_data/email_bank/bank_email_summary.md
+raw_data/financial_email/eml/                  # 邮件原文 .eml
+raw_data/financial_email/body/                 # 抽取后的正文文本
+raw_data/financial_email/attachments/          # 邮件附件
+raw_data/financial_email/financial_email_records.jsonl
+raw_data/financial_email/financial_email_records.json
+raw_data/financial_email/financial_email_summary.md
 ```
 
 先在 `common.env` 中配置邮箱 IMAP 信息。网易 126 邮箱使用 `imap.126.com:993`，密码应填写客户端授权码，不要使用网页登录密码：
 
 ```env
-BANK_EMAIL_IMAP_HOST=imap.126.com
-BANK_EMAIL_IMAP_PORT=993
-BANK_EMAIL_IMAP_USER=your-account@126.com
-BANK_EMAIL_IMAP_PASSWORD=your-126-authorization-code
-BANK_EMAIL_CLIENT_SUPPORT_EMAIL=support@example.invalid
-BANK_EMAIL_SINCE=2024-01-01
-BANK_EMAIL_MAX_MESSAGES=200
-BANK_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]
+FINANCIAL_EMAIL_IMAP_HOST=imap.126.com
+FINANCIAL_EMAIL_IMAP_PORT=993
+FINANCIAL_EMAIL_IMAP_USER=your-account@126.com
+FINANCIAL_EMAIL_IMAP_PASSWORD=your-126-authorization-code
+FINANCIAL_EMAIL_CLIENT_SUPPORT_EMAIL=support@example.invalid
+FINANCIAL_EMAIL_SINCE=2024-01-01
+FINANCIAL_EMAIL_MAX_MESSAGES=200
+FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]
 ```
 
 网易邮箱在第三方客户端登录后还要求发送 IMAP `ID` 客户端身份信息。项目会自动发送 `FinancialTrack` 的 `ID` 信息，以避免 `Unsafe Login. Please contact kefu@188.com for help` 这类 `SELECT/EXAMINE INBOX` 阶段拦截。
@@ -328,63 +326,63 @@ BANK_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动账","
 运行：
 
 ```powershell
-python bank_email_bot.py --since 2024-01-01 --max-messages 500
+python financial_email_bot.py --since 2024-01-01 --max-messages 500
 ```
 
 也可以先解析已经导出的 `.eml` 文件，避免直接连接邮箱：
 
 ```powershell
-python bank_email_bot.py --eml-dir raw_data/email_export
+python financial_email_bot.py --eml-dir raw_data/email_export
 ```
 
-当前邮件解析会先按 `config.yaml` 中的 `bank_email.rules` 匹配银行邮件；如果没有命中银行规则，则使用 `BANK_EMAIL_SUBJECT_KEYWORDS_JSON` 中的标题关键字兜底捕捉银行账单/流水邮件。解析器会递归保存邮件中的 PDF 等附件，再用通用金额、时间、卡尾号正则抽取 `candidate_transactions`。这一步是“原始数据层”，不是最终账本；后续应按具体银行邮件模板增加专用 parser，并把候选交易合并进统一流水 schema。
+当前邮件解析会先按 `config.yaml` 中的 `financial_email.rules` 匹配流水邮件；如果没有命中来源规则，则使用 `FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON` 中的标题关键字兜底捕捉账单/流水邮件。解析器会递归保存邮件中的 PDF 等附件，再用通用金额、时间、卡尾号正则抽取 `candidate_transactions`。这一步是“原始数据层”，不是最终账本；后续应按具体邮件模板增加专用 parser，并把候选交易合并进统一流水 schema。
 
-### 银行附件密码准备
+### 邮件附件密码准备
 
-银行账单 PDF 或 ZIP 附件通常带密码。真实密码放在独立文件 `bank_attachment_passwords.env`，不要放进 `common.env`，也不要提交到版本库。先复制模板：
+银行账单 PDF 或 ZIP 附件通常带密码。真实密码放在独立文件 `financial_attachment_passwords.env`，不要放进 `common.env`，也不要提交到版本库。先复制模板：
 
 ```powershell
-Copy-Item bank_attachment_passwords.env.example bank_attachment_passwords.env
+Copy-Item financial_attachment_passwords.env.example financial_attachment_passwords.env
 ```
 
 可配置项：
 
 ```env
-BANK_ATTACHMENT_PASSWORD_DEFAULT=
-BANK_ATTACHMENT_PASSWORD_BY_BANK_JSON={"cmb":"password-for-cmb"}
-BANK_ATTACHMENT_PASSWORD_BY_FILENAME_JSON={"statement.pdf":"password-for-this-file"}
-BANK_ATTACHMENT_PASSWORD_BY_PATTERN_JSON={"招商":"password-for-filename-containing-this-text"}
-BANK_ATTACHMENT_PASSWORD_BY_TYPE_JSON={"pdf":["pdf-password-1","pdf-password-2"],"zip":["zip-password-1","zip-password-2"]}
-BANK_ATTACHMENT_PDF_PWD=["pdf-password-1","pdf-password-2"]
-BANK_ATTACHMENT_ZIP_PWD=["zip-password-1","zip-password-2"]
+FINANCIAL_ATTACHMENT_PASSWORD_DEFAULT=
+FINANCIAL_ATTACHMENT_PASSWORD_BY_BANK_JSON={"cmb":"password-for-cmb"}
+FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON={"statement.pdf":"password-for-this-file"}
+FINANCIAL_ATTACHMENT_PASSWORD_BY_PATTERN_JSON={"招商":"password-for-filename-containing-this-text"}
+FINANCIAL_ATTACHMENT_PASSWORD_BY_TYPE_JSON={"pdf":["pdf-password-1","pdf-password-2"],"zip":["zip-password-1","zip-password-2"]}
+FINANCIAL_ATTACHMENT_PDF_PWD=["pdf-password-1","pdf-password-2"]
+FINANCIAL_ATTACHMENT_ZIP_PWD=["zip-password-1","zip-password-2"]
 ```
 
 生成附件清单并检查哪些附件还缺密码：
 
 ```powershell
-python bank_attachment_prepare.py
+python financial_email_bot.py --stage prepare
 ```
 
 默认输出：
 
 ```text
-raw_data/email_bank/attachment_inventory.json
-raw_data/email_bank/attachment_inventory.md
+raw_data/financial_email/attachment_inventory.json
+raw_data/financial_email/attachment_inventory.md
 ```
 
-`BANK_ATTACHMENT_PASSWORD_BY_TYPE_JSON` 是标准的按文件类型配置方式；`BANK_ATTACHMENT_PDF_PWD` 和 `BANK_ATTACHMENT_ZIP_PWD` 是按类型配置的简写。清单只记录是否已匹配到密码、匹配来源和候选密码数量，不输出真实密码。
+`FINANCIAL_ATTACHMENT_PASSWORD_BY_TYPE_JSON` 是标准的按文件类型配置方式；`FINANCIAL_ATTACHMENT_PDF_PWD` 和 `FINANCIAL_ATTACHMENT_ZIP_PWD` 是按类型配置的简写。清单只记录是否已匹配到密码、匹配来源和候选密码数量，不输出真实密码。
 
 尝试解密/解压附件：
 
 ```powershell
-python bank_attachment_extract.py
+python financial_email_bot.py --stage extract
 ```
 
 默认输出：
 
 ```text
-raw_data/email_bank/extracted_attachments/attachment_extract_manifest.json
-raw_data/email_bank/extracted_attachments/attachment_extract_failures.md
+raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
+raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 ```
 
 日志会记录每个附件的解密/解压结果、密码来源和候选数量，不记录真实密码。
@@ -394,14 +392,14 @@ raw_data/email_bank/extracted_attachments/attachment_extract_failures.md
 已下载的邮件正文候选交易和已成功解密/解压的 PDF、ZIP 内部文件可以整理为统一银行流水中间层：
 
 ```powershell
-python consolidate_bank_transactions.py
+python financial_email_bot.py --stage normalize
 ```
 
 默认读取：
 
 ```text
-raw_data/email_bank/bank_email_records.jsonl
-raw_data/email_bank/extracted_attachments/attachment_extract_manifest.json
+raw_data/financial_email/financial_email_records.jsonl
+raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 ```
 
 默认输出：
@@ -429,7 +427,7 @@ git remote -v
 git remote set-url origin git@github.com:<owner>/<repo>.git
 ```
 
-提交前重点确认不要提交本地隐私数据、真实账单、浏览器 profile、授权码、token、密码、附件、订单截图、账单 PDF、`common.env` 或 `bank_attachment_passwords.env`：
+提交前重点确认不要提交本地隐私数据、真实账单、浏览器 profile、授权码、token、密码、附件、订单截图、账单 PDF、`common.env` 或 `financial_attachment_passwords.env`：
 
 ```powershell
 git status --short --ignored

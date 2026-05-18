@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from localai.context import AppContext
-from localai.modules.bank_attachment_inventory import build_attachment_inventory
-from localai.modules.bank_attachment_passwords import AttachmentPasswordStore
+from localai.modules.financial_attachment_inventory import build_attachment_inventory
+from localai.modules.financial_attachment_passwords import AttachmentPasswordStore
 
 
 logger = logging.getLogger(__name__)
@@ -18,8 +18,8 @@ def run(ctx: AppContext, records_path: str | Path, password_env_path: str | Path
     output_path = ctx.resolve_path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    section = ctx.config.get("bank_attachments", {})
-    configured_password_env = password_env_path or section.get("password_env_file", "./bank_attachment_passwords.env")
+    section = ctx.config.get("financial_attachments", {})
+    configured_password_env = password_env_path or section.get("password_env_file", "./financial_attachment_passwords.env")
     password_file = ctx.resolve_path(configured_password_env)
     password_store = AttachmentPasswordStore.from_env_file(password_file)
 
@@ -39,7 +39,7 @@ def run(ctx: AppContext, records_path: str | Path, password_env_path: str | Path
         "inventory_json": str(json_path),
         "inventory_markdown": str(markdown_path),
     }
-    logger.info("Finished bank attachment preparation: %s", summary)
+    logger.info("Finished financial attachment preparation: %s", summary)
     return summary
 
 
@@ -51,7 +51,7 @@ def _build_markdown(inventory: list[dict[str, Any]], password_file: Path) -> str
         by_ext[item["extension"]] = by_ext.get(item["extension"], 0) + 1
 
     lines = [
-        "# 银行邮件附件密码准备清单",
+        "# 流水邮件附件密码准备清单",
         "",
         f"- 密码 env 文件：`{password_file}`",
         f"- 密码 env 是否存在：{password_file.exists()}",
