@@ -18,7 +18,7 @@
   python ai_self_check.py --config config.yaml --no-chat
 
 输出：
-  在控制台输出 JSON 自检结果；运行日志按统一日志配置写入 `log/` 目录。
+  在控制台输出 JSON 自检结果；运行日志按统一日志配置写入 `logs/` 目录。
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ from localai.flows.ai_self_check import run
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Check local CUDA and llama.cpp AI availability.")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
     parser.add_argument(
         "--prompt",

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-import os
 import json
+import os
+import platform
 import re
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,18 @@ except ImportError as exc:  # pragma: no cover - exercised before dependencies i
 
 
 ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
+
+
+PLATFORM_ROOT_ENV = {
+    "windows": "CLOUDSTATION_ROOT_WINDOWS",
+    "darwin": "CLOUDSTATION_ROOT_MACOS",
+    "linux": "CLOUDSTATION_ROOT_LINUX",
+}
+PLATFORM_ROOT_DEFAULTS = {
+    "windows": Path("D:/CloudStation"),
+    "darwin": Path("~/SynologyDrive"),
+    "linux": Path("~/CloudStation"),
+}
 
 
 def load_common_env(project_root: Path, filename: str = "common.env") -> None:
@@ -27,7 +41,7 @@ def load_common_env(project_root: Path, filename: str = "common.env") -> None:
         key, value = line.split("=", 1)
         key = key.strip()
         value = _strip_optional_quotes(value.strip())
-        if key and (os.environ.get(key) is None or os.environ.get(key) == ""):
+        if key and key not in os.environ:
             os.environ[key] = value
 
 
@@ -39,10 +53,33 @@ def load_config(config_path: str | Path = "config.yaml", load_env: bool = True) 
 
     if load_env:
         load_common_env(project_root)
+    if not os.environ.get("CLOUDSTATION_ROOT"):
+        os.environ["CLOUDSTATION_ROOT"] = str(get_cloudstation_root())
 
     with path.open("r", encoding="utf-8") as file:
         data = yaml.safe_load(file) or {}
+    if not isinstance(data, dict):
+        raise ValueError(f"配置文件顶层必须是 mapping: {path}")
     return interpolate_env(data)
+
+
+def get_cloudstation_root(
+    environ: Mapping[str, str] | None = None,
+    system: str | None = None,
+) -> Path:
+    """按显式值、平台值、平台默认值的顺序解析 CloudStation 根目录。"""
+    source = os.environ if environ is None else environ
+    explicit = source.get("CLOUDSTATION_ROOT")
+    if explicit:
+        return Path(explicit).expanduser()
+
+    platform_name = (system or platform.system()).lower()
+    env_name = PLATFORM_ROOT_ENV.get(platform_name)
+    if env_name and source.get(env_name):
+        return Path(source[env_name]).expanduser()
+
+    default = PLATFORM_ROOT_DEFAULTS.get(platform_name, Path("~/CloudStation"))
+    return default.expanduser()
 
 
 def interpolate_env(value: Any) -> Any:

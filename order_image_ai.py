@@ -26,7 +26,7 @@
   python order_image_ai.py meituan --image raw_data/meituan/example.png
 
 输出：
-  将每张截图的识别结果写入 JSON 输出目录，在控制台输出 JSON 汇总，并追加终端摘要到 `log/order_image_ai.log`。
+  将每张截图的识别结果写入 JSON 输出目录，在控制台输出 JSON 汇总，并追加终端摘要到 `logs/order_image_ai.log`。
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ PLATFORM_OUTPUT_NAMES = {
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Use local AI vision to extract order JSON from PNG screenshots.")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("platform", choices=sorted(PLATFORM_INPUT_DIRS), help="Order platform.")
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
     parser.add_argument("--image", help="Single screenshot image to parse.")
@@ -106,7 +106,7 @@ def main() -> int:
             progress.finish()
     summary = {"platform": platform, "results": results}
     append_terminal_summary_log(ctx.project_root, summary)
-    logger.info("Saved terminal result summary to log/order_image_ai.log")
+    logger.info("Saved terminal result summary to logs/order_image_ai.log")
     print_json(summary)
     return 0
 
@@ -183,7 +183,7 @@ def _shorten(value: str, max_length: int) -> str:
 
 
 def append_terminal_summary_log(project_root: Path, summary: dict[str, object]) -> None:
-    log_path = project_root / "log" / "order_image_ai.log"
+    log_path = project_root / "logs" / "order_image_ai.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     payload = json.dumps(summary, ensure_ascii=False, indent=2)

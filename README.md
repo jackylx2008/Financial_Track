@@ -21,20 +21,24 @@ Financial_Track/
   jd_pdf_bot.py              # 京东订单 PDF 导出
   taobao_pdf_bot.py          # 淘宝订单 PDF 辅助打印
   financial_email_bot.py          # 邮件流水采集、附件处理和银行流水归一化入口
+  financial_attachment_crack.py   # 加密账单附件密码处理入口
   financial_email_workflow/       # 邮件流水和附件处理兼容入口
   normalize_transactions.py       # 统一 normalized 中间层构建入口
   ledger_build.py                 # 最终账本 ledger 构建入口
   ledger_review_export.py         # 账本人工校核 Excel 导出入口
+  logging_config.py               # 项目统一日志配置
   src/localai/
     entrypoints.py           # 入口脚本公共启动辅助
-    logging_config.py        # 统一日志配置
+    context.py               # 统一项目上下文和路径解析
     flows/                   # 场景编排层
     modules/                 # 可复用基础能力模块
+  tests/                     # 单元测试与工作流级测试
+  docs/                      # 架构、配置、进度和历史文档
   config.yaml                # 项目运行配置
   common.env.example         # 本地环境变量模板
   raw_data/                  # 本地采集数据、邮件、附件和 AI JSON，已被 git 忽略
   processed_data/            # normalized、ledger、review 和 reports 输出，已被 git 忽略
-  log/                       # 运行日志，已被 git 忽略
+  logs/                      # 运行日志，已被 git 忽略
 ```
 
 项目采用“根目录独立入口脚本 + `src/localai/flows` 编排层 + `src/localai/modules` 基础模块”的结构。入口脚本只负责读取配置、初始化日志、创建上下文并调用对应流程，核心处理逻辑应放在 `flows` 或 `modules` 中。
@@ -78,7 +82,7 @@ python -m playwright install chromium
 如果只运行部分工具，也可以按需安装：
 
 ```powershell
-pip install playwright pyyaml python-dotenv pyautogui pillow
+pip install playwright pyyaml pyautogui pillow
 ```
 
 ## 配置、日志与本地文件
@@ -93,24 +97,38 @@ Copy-Item common.env.example common.env
 
 ```env
 CLOUDSTATION_ROOT_WINDOWS=D:\CloudStation
-CLOUDSTATION_ROOT_MACOS=~/CloudStation
+CLOUDSTATION_ROOT_MACOS=~/SynologyDrive
 CLOUDSTATION_ROOT_LINUX=~/CloudStation
 ```
 
-统一日志配置位于 `src/localai/logging_config.py`，不再放在项目根目录。默认日志写入根目录 `log/`，日志文件名通常对应入口脚本名，例如：
+统一日志配置位于项目根目录 `logging_config.py`。`src/localai/logging_config.py` 仅保留旧导入兼容。默认日志写入根目录 `logs/`，日志文件名通常对应入口脚本名，例如：
 
 ```text
-log/ai_self_check.log
-log/order_image_ai.log
-log/financial_email_bot.log
+logs/ai_self_check.log
+logs/order_image_ai.log
+logs/financial_email_bot.log
 ```
 
-`common.env`、`financial_attachment_passwords.env`、`raw_data/`、`processed_data/`、`log/`、`vendor/` 等本地文件或运行产物不应提交到 git。
+`common.env`、`financial_attachment_passwords.env`、`raw_data/`、`processed_data/`、`logs/`、`vendor/` 等本地文件或运行产物不应提交到 git。
+
+## 开发检查
+
+项目使用标准库 `unittest`，测试数据均为临时目录或脱敏的最小样本：
+
+```powershell
+$env:PYTHONPATH='src'
+python -m unittest discover -s tests -v
+python -m compileall -q -f -x 'vendor|raw_data|processed_data|logs?|__pycache__' .
+python -m flake8 .
+git diff --check
+```
+
+跨平台协作规范见 [`AGENTS.md`](AGENTS.md)，详细项目文档集中存放在 [`docs/`](docs/)。
 
 安卓订单截图需要 ADB。可以使用 Android Platform Tools，也可以使用 MuMu 自带的 ADB：
 
 ```text
-C:\Program Files\Netease\MuMu\nx_device\12.0\shell\adb.exe
+<adb_path>
 ```
 
 确认安卓手机已打开 USB 调试，并能被 ADB 识别：
@@ -122,14 +140,13 @@ adb devices
 或使用 MuMu 自带 ADB：
 
 ```powershell
-cd "C:\Program Files\Netease\MuMu\nx_device\12.0\shell"
-.\adb.exe devices
+& "<adb_path>" devices
 ```
 
 正常输出类似：
 
 ```text
-10CF8C17KP004G0 device
+<device_serial> device
 ```
 
 ## 安卓订单截图
@@ -137,15 +154,15 @@ cd "C:\Program Files\Netease\MuMu\nx_device\12.0\shell"
 通用入口支持拼多多和美团：
 
 ```powershell
-python pdd_order_bot.py capture --device 10CF8C17KP004G0
-python meituan_order_bot.py capture --device 10CF8C17KP004G0
+python pdd_order_bot.py capture --device <device_serial>
+python meituan_order_bot.py capture --device <device_serial>
 ```
 
 也可以使用平台专用入口：
 
 ```powershell
-python pdd_order_bot.py capture --device 10CF8C17KP004G0
-python meituan_order_bot.py capture --device 10CF8C17KP004G0
+python pdd_order_bot.py capture --device <device_serial>
+python meituan_order_bot.py capture --device <device_serial>
 ```
 
 默认输出：
@@ -164,15 +181,15 @@ raw_data/meituan/meituan_*.png
 ### 固定页数连续截图
 
 ```powershell
-python pdd_order_bot.py capture-scroll --device 10CF8C17KP004G0 --pages 5 --wait 1.5
-python meituan_order_bot.py capture-scroll --device 10CF8C17KP004G0 --pages 5 --wait 1.5
+python pdd_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
+python meituan_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
 ```
 
 ### 自动截图到列表底部
 
 ```powershell
-python pdd_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 80 --wait 1.5
-python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 150 --wait 1.5
+python pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 80 --wait 1.5
+python meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --wait 1.5
 ```
 
 脚本通过比较相邻截图主体区域判断是否已经到底。美团如果提示“显示更多历史订单”，脚本会暂停；手工点击手机上的按钮后，在终端输入 `c` 继续。直接回车则停止。
@@ -182,8 +199,8 @@ python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pag
 滑动距离不合适时，可以调参数：
 
 ```powershell
-python pdd_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 120 --wait 1.5 --start-y 1700 --end-y 950
-python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pages 150 --start-y 1800 --end-y 450
+python pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 120 --wait 1.5 --start-y 1700 --end-y 950
+python meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --start-y 1800 --end-y 450
 ```
 
 ## 京东订单 PDF
@@ -193,19 +210,21 @@ python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0 --max-pag
 先在 `common.env` 中配置输出目录：
 
 ```env
-JD_PDF_OUTPUT_DIR=D:\your\pdf\output
+JD_PDF_OUTPUT_DIR=<pdf_output_dir>
 ```
 
 `config.yaml` 中配置浏览器用户数据目录、等待时间和每年页数：
 
 ```yaml
-jd_pdf_output_dir: {JD_PDF_OUTPUT_DIR}
-jd_browser_user_data_dir: ./raw_data/jd_browser_profile
-jd_pdf_headless: false
-jd_pdf_wait_seconds: 5
-jd_order_pages:
-  2024: 4
-  2023: 5
+flows:
+  jd_pdf:
+    output_dir: ${JD_PDF_OUTPUT_DIR:-./raw_data/jd_pdf}
+    browser_user_data_dir: ./raw_data/jd_browser_profile
+    headless: false
+    wait_seconds: 5
+    order_pages:
+      2024: 4
+      2023: 5
 ```
 
 运行：
@@ -239,7 +258,7 @@ python taobao_pdf_bot.py
 配置说明见：
 
 ```text
-LOCAL_AI_RUNTIME_SETUP.md
+docs/LOCAL_AI_RUNTIME_SETUP.md
 ```
 
 真实本机路径写入 `common.env`，不要提交到 git。关键变量包括：
@@ -314,14 +333,14 @@ raw_data/order_json/meituan
 运行日志写入：
 
 ```text
-log/order_image_ai.log
+logs/order_image_ai.log
 ```
 
 日志会记录任务参数、图片总数、每张图片的开始/完成、输出 JSON 路径、订单数量、告警和最终汇总。终端进度条本身不会逐帧写入日志。
 
 ## 数据与隐私
 
-`raw_data/`、`processed_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
+`raw_data/`、`processed_data/`、`logs/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
 
 安卓截图已经可以进入本地 AI 识别并整理为订单 JSON；最终账本仍以银行/支付流水为主来源，订单只作为购物、外卖、平台服务等场景的明细补充，避免重复统计。
 

@@ -1,5 +1,23 @@
 # -*- coding: utf-8 -*-
-"""构建最终账本 ledger 层。"""
+"""最终账本构建工具
+
+用途：
+  读取 normalized 财务事实与订单付款关联，生成以银行流水为主、订单明细为补充的最终账本。
+
+配置文件：
+  默认读取项目根目录 ``config.yaml`` 和本地 ``common.env``；前者提供日志及工作流默认配置，后者承载本机差异。
+
+可选参数：
+  --config          配置文件路径，默认 ``config.yaml``。
+  --normalized-dir  normalized 中间层目录。
+  --output-dir      ledger 输出目录。
+
+示例：
+  python ledger_build.py
+
+输出：
+  在 ``processed_data/ledger`` 下生成账本 JSON/JSONL 与质量报告，并向控制台输出 JSON 汇总。
+"""
 
 from __future__ import annotations
 
@@ -17,9 +35,7 @@ from localai.flows.ledger_build import run as run_ledger_build
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Build final ledger entries from normalized financial transactions."
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
     parser.add_argument(
         "--normalized-dir",

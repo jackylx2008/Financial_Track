@@ -4,10 +4,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Any
 import re
+from typing import Any
 
-from localai.modules.excel_reader import ExcelSheetReadConfig, ExcelSheetTarget, resolve_sheet_targets
+from localai.modules.excel_reader import ExcelSheetReadConfig, resolve_sheet_targets
 
 
 EXCEL_SUFFIXES = {".xlsx", ".xlsm"}

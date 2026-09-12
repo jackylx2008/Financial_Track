@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 from datetime import datetime
-from decimal import Decimal
 from typing import Any
 
 from localai.modules.bank_transaction_schema import decimal_to_string, parse_decimal

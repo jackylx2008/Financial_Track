@@ -22,10 +22,10 @@ class AppContext:
 
     @property
     def log_dir(self) -> Path:
-        return self.project_root / "log"
+        return self.project_root / "logs"
 
     def resolve_path(self, value: str | Path) -> Path:
-        path = Path(value)
+        path = Path(value).expanduser()
         if path.is_absolute():
             return path
         return self.project_root / path

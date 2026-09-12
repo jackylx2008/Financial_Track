@@ -66,8 +66,8 @@ class LlamaCppConfig:
             reasoning_budget=_optional_int(raw.get("reasoning_budget")),
             startup_timeout_sec=as_int(raw.get("startup_timeout_sec"), 180),
             startup_poll_interval_sec=as_float(raw.get("startup_poll_interval_sec"), 1.0),
-            stdout_log_path=_resolve_path(project_root, raw.get("stdout_log_path", "./log/llama_server.out.log")),
-            stderr_log_path=_resolve_path(project_root, raw.get("stderr_log_path", "./log/llama_server.err.log")),
+            stdout_log_path=_resolve_path(project_root, raw.get("stdout_log_path", "./logs/llama_server.out.log")),
+            stderr_log_path=_resolve_path(project_root, raw.get("stderr_log_path", "./logs/llama_server.err.log")),
         )
 
 

@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run the financial email transaction workflow.")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
     parser.add_argument(
         "--stage",
@@ -184,7 +184,7 @@ def run_prepare_stage(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:
 def run_crack_stage(args: argparse.Namespace) -> dict[str, Any]:
     cmd = [
         sys.executable,
-        str(PROJECT_ROOT / "financial_email_workflow" / "gpu_zip_pdf_cracker.py"),
+        str(PROJECT_ROOT / "financial_attachment_crack.py"),
         "--config",
         args.config,
         "--inventory",

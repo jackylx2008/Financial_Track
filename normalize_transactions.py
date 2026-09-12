@@ -1,8 +1,26 @@
 # -*- coding: utf-8 -*-
-"""统一交易归一化入口。
+"""统一交易归一化工具
 
-银行/邮件、订单截图等来源的解析仍在各自工作流模块下完成；本入口只负责把已有结构化结果汇总到
-`processed_data/normalized`，形成可追溯、可去重的中间层。
+用途：
+  汇总已经结构化的银行/邮件流水和订单截图结果，形成可追溯、可去重的 normalized 中间层。
+
+配置文件：
+  默认读取项目根目录 ``config.yaml`` 和本地 ``common.env``，用于统一日志、服务和路径环境。
+
+可选参数：
+  --config               配置文件路径。
+  --source               可重复指定 bank、orders 或 all。
+  --output-dir           normalized 输出目录。
+  --email-records        邮件记录 JSONL。
+  --attachment-manifest  附件提取清单。
+  --order-json-root      各平台订单 JSON 根目录。
+  --order-platform       可重复指定订单平台。
+
+示例：
+  python normalize_transactions.py --source all
+
+输出：
+  默认写入 ``processed_data/normalized``，并向控制台输出 JSON 汇总。
 """
 
 from __future__ import annotations
@@ -22,7 +40,7 @@ from localai.flows.transaction_normalize import run as run_transaction_normalize
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build the unified normalized transaction layer.")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
     parser.add_argument(
         "--source",

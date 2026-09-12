@@ -3,7 +3,7 @@
 Capture the current Android screen through ADB.
 
 Example:
-    python -m order_capture.capture_screen pinduoduo --device 10CF8C17KP004G0
+    python -m order_capture.capture_screen pinduoduo --device <device_serial>
 """
 
 from __future__ import annotations
@@ -87,7 +87,7 @@ def capture_screen(adb_path: Path, output_path: Path, device: str | None = None)
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="通过 ADB 截取当前安卓手机屏幕")
     parser.add_argument("platform", help="平台名称: pinduoduo/pdd/拼多多/meituan/美团")
-    parser.add_argument("--device", help="ADB 设备序列号，例如 10CF8C17KP004G0")
+    parser.add_argument("--device", help="ADB 设备序列号，例如 <device_serial>")
     parser.add_argument("--adb", help="adb.exe 路径；默认优先使用 PATH，其次使用 MuMu 自带 ADB")
     parser.add_argument(
         "--output-dir",

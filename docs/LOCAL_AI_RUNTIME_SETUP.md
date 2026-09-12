@@ -135,15 +135,15 @@ LLAMACPP_REASONING_BUDGET=0
 - `LLAMACPP_CTX_SIZE=8192` 限制上下文窗口，避免默认超大上下文导致 KV cache 过大
 - `LLAMACPP_REASONING=off` 和 `LLAMACPP_REASONING_BUDGET=0` 用于让 Qwen3 类模型在自检时直接返回 `message.content`
 
-当前已验证的本机配置示例：
+脱敏配置示例：
 
 ```dotenv
 LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
 LLAMACPP_MODEL=Qwen3.8-27B-Q4_K_M
 LLAMACPP_AUTOSTART=true
-LLAMACPP_SERVER_PATH=D:\llama-cpp-cu12\llama-server.exe
-LLAMACPP_MODEL_PATH=C:\Users\bcjt_\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\Qwen3.8-27B-Q4_K_M.gguf
-LLAMACPP_MMPROJ_PATH=C:\Users\bcjt_\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\mmproj-Qwen3.8-27B-BF16.gguf
+LLAMACPP_SERVER_PATH=<llama_cpp_dir>\llama-server.exe
+LLAMACPP_MODEL_PATH=<user_profile>\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\Qwen3.8-27B-Q4_K_M.gguf
+LLAMACPP_MMPROJ_PATH=<user_profile>\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF\mmproj-Qwen3.8-27B-BF16.gguf
 LLAMACPP_EXTRA_DLL_DIRS=./vendor/cuda12
 LLAMACPP_N_GPU_LAYERS=999
 LLAMACPP_CTX_SIZE=8192
@@ -153,24 +153,27 @@ LLAMACPP_REASONING_BUDGET=0
 
 ### Qwen3.8 模型版本选择
 
-启动本地 AI 时，默认使用经过审核的 Qwen3.8 模型：
+仓库不会写死模型文件或个人目录；`config.yaml` 默认使用稳定别名 `local-model`，实际模型由本地环境变量决定。
+如果本机选择经过审核的 Qwen3.8 模型，可将文件放在类似目录：
 
 ```text
-C:\Users\bcjt_\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF
+<user_profile>\.lmstudio\models\lmstudio-community\Qwen3.8-27B-GGUF
 ```
 
-默认主模型为 `Qwen3.8-27B-Q4_K_M.gguf`，多模态投影文件为 `mmproj-Qwen3.8-27B-BF16.gguf`。除非在配置中明确指定其他模型，否则项目应使用这个审核版本。
+对应主模型可为 `Qwen3.8-27B-Q4_K_M.gguf`，多模态投影文件可为 `mmproj-Qwen3.8-27B-BF16.gguf`。
+这些只是本地配置示例，不是仓库默认路径。
 
 如需使用非审核版 Qwen3.8，可在项目的 `config.yaml` 中将 `llamacpp` 配置为：
 
 ```yaml
 llamacpp:
   model: ${LLAMACPP_MODEL:-Qwen3.8-27B-Uncensored-Q5_K_M}
-  model_path: '${LLAMACPP_MODEL_PATH:-C:\Users\bcjt_\.lmstudio\models\JonathanColetti\Qwen3.8-27B-Uncensored-GGUF\Qwen3.8-27B-Uncensored-Q5_K_M.gguf}'
-  mmproj_path: '${LLAMACPP_MMPROJ_PATH:-C:\Users\bcjt_\.lmstudio\models\JonathanColetti\Qwen3.8-27B-Uncensored-GGUF\mmproj-Qwen3.8-27B-Uncensored-F16.gguf}'
+  model_path: '${LLAMACPP_MODEL_PATH:-<model_directory>/Qwen3.8-27B-Uncensored-Q5_K_M.gguf}'
+  mmproj_path: '${LLAMACPP_MMPROJ_PATH:-<model_directory>/mmproj-Qwen3.8-27B-Uncensored-F16.gguf}'
 ```
 
-这段 YAML 仍允许通过同名环境变量覆盖配置。非审核版仅在项目明确配置上述模型时启用；移除这些覆盖项后，应恢复使用默认的审核版 Qwen3.8。非审核版可能生成未经安全对齐或内容过滤的输出，调用方需要自行进行输入校验、输出审查和使用范围控制。
+这段 YAML 仍允许通过同名环境变量覆盖配置。移除覆盖项后会恢复仓库的 `local-model` 通用别名，而不会选择某个本机文件。
+非审核版可能生成未经安全对齐或内容过滤的输出，调用方需要自行进行输入校验、输出审查和使用范围控制。
 
 ## 4. 自动启动流程
 
@@ -216,17 +219,17 @@ llamacpp:
 先确认 `llama.cpp` 能看到 CUDA 设备：
 
 ```powershell
-$env:PATH=(Resolve-Path ".\vendor\cuda12").Path + ";D:\llama-cpp-cu12;" + $env:PATH
-& "D:\llama-cpp-cu12\llama-server.exe" --list-devices
+$env:PATH=(Resolve-Path ".\vendor\cuda12").Path + ";<llama_cpp_dir>;" + $env:PATH
+& "<llama_cpp_dir>\llama-server.exe" --list-devices
 ```
 
 正常情况下应看到类似：
 
 ```text
 ggml_cuda_init: found 1 CUDA devices
-load_backend: loaded CUDA backend from D:\llama-cpp-cu12\ggml-cuda.dll
+load_backend: loaded CUDA backend from <llama_cpp_dir>\ggml-cuda.dll
 Available devices:
-  CUDA0: NVIDIA GeForce RTX 5090 D v2
+  CUDA0: <gpu_model>
 ```
 
 如果只看到：

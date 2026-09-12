@@ -6,9 +6,9 @@
   可按配置批量导出年份页码，也可只导出指定订单 URL。
 
 配置文件：
-  默认读取项目根目录 `config.yaml` 和 `common.env`。`config.yaml` 中的 `jd_pdf_output_dir`
-  指定 PDF 输出目录，`jd_browser_user_data_dir` 指定浏览器用户数据目录，`jd_order_pages` 指定批量导出的年份和页码，
-  `jd_pdf_headless`、`jd_pdf_wait_seconds`、`jd_login_timeout_seconds` 控制浏览器运行方式和等待时间。
+  默认读取项目根目录 `config.yaml` 和 `common.env`。`config.yaml` 中的 `flows.jd_pdf.output_dir`
+  指定 PDF 输出目录，`browser_user_data_dir` 指定浏览器用户数据目录，`order_pages` 指定批量导出的年份和页码，
+  `headless`、`wait_seconds`、`login_timeout_seconds` 控制浏览器运行方式和等待时间。
   `common.env` 可提供 `JD_PDF_OUTPUT_DIR` 等本机路径变量。
 
 可选参数：
@@ -21,15 +21,14 @@
   python jd_pdf_bot.py --url "https://order.jd.com/center/list.action?d=2024&s=4096&page=1"
 
 输出：
-  将 PDF 写入 `jd_pdf_output_dir` 指定目录，文件名包含订单年份、页码或 custom 标记以及时间戳；运行日志写入 `log/`。
+  将 PDF 写入 `jd_pdf_output_dir` 指定目录，文件名包含订单年份、页码或 custom 标记以及时间戳；运行日志写入 `logs/`。
 
 依赖：
-  pip install playwright pyyaml python-dotenv
+  pip install playwright pyyaml
   python -m playwright install chromium
 """
 
 import argparse
-import os
 import re
 import sys
 import time
@@ -37,21 +36,17 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-from dotenv import load_dotenv
-
 PROJECT_ROOT = Path(__file__).resolve().parent
 SRC_PATH = str(PROJECT_ROOT / "src")
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
-from localai.logging_config import get_logger, setup_logger
+from logging_config import get_logger, setup_logger
+from localai.modules.config_loader import load_config as load_project_config
 
 
 JD_ORDER_URL_TEMPLATE = "https://order.jd.com/center/list.action?d={year}&s=4096&page={page}"
 CONFIG_PATH = Path("config.yaml")
-ENV_PATH = Path("common.env")
-
 DEFAULT_BROWSER_USER_DATA_DIR = Path("raw_data") / "jd_browser_profile"
 DEFAULT_HEADLESS = False
 DEFAULT_WAIT_SECONDS = 5.0
@@ -61,27 +56,8 @@ logger = get_logger(__name__)
 
 
 def load_config(path: Path = CONFIG_PATH) -> dict[str, Any]:
-    if not path.exists():
-        raise FileNotFoundError(f"配置文件不存在: {path}")
-
-    with path.open("r", encoding="utf-8") as file:
-        data = yaml.safe_load(file) or {}
-
-    if not isinstance(data, dict):
-        raise ValueError(f"配置文件格式错误，顶层必须是 YAML mapping: {path}")
-
-    return data
-
-
-def resolve_placeholders(value: str) -> str:
-    def replace(match: re.Match[str]) -> str:
-        env_name = match.group(1)
-        env_value = os.getenv(env_name)
-        if env_value is None:
-            raise ValueError(f"环境变量未配置: {env_name}")
-        return env_value
-
-    return re.sub(r"\{([A-Za-z_][A-Za-z0-9_]*)\}", replace, value)
+    data = load_project_config(PROJECT_ROOT / path if not path.is_absolute() else path)
+    return data.get("flows", {}).get("jd_pdf", {})
 
 
 def resolve_path(value: Any, default: Path | None = None) -> Path:
@@ -89,31 +65,25 @@ def resolve_path(value: Any, default: Path | None = None) -> Path:
         if default is None:
             raise ValueError("路径配置不能为空")
         path = default
-    elif isinstance(value, dict) and len(value) == 1:
-        env_name = next(iter(value))
-        env_value = os.getenv(str(env_name))
-        if env_value is None:
-            raise ValueError(f"环境变量未配置: {env_name}")
-        path = Path(env_value)
     else:
-        path = Path(resolve_placeholders(str(value)))
+        path = Path(str(value))
 
     path = path.expanduser()
     if not path.is_absolute():
-        path = Path.cwd() / path
+        path = PROJECT_ROOT / path
 
     return path
 
 
 def get_output_dir(config: dict[str, Any]) -> Path:
-    path = resolve_path(config.get("jd_pdf_output_dir"))
+    path = resolve_path(config.get("output_dir"))
     path.mkdir(parents=True, exist_ok=True)
     return path
 
 
 def get_browser_user_data_dir(config: dict[str, Any]) -> Path:
     path = resolve_path(
-        config.get("jd_browser_user_data_dir"),
+        config.get("browser_user_data_dir"),
         default=DEFAULT_BROWSER_USER_DATA_DIR,
     )
     path.mkdir(parents=True, exist_ok=True)
@@ -140,12 +110,12 @@ def get_int(config: dict[str, Any], key: str, default: int) -> int:
 
 
 def get_order_pages(config: dict[str, Any]) -> list[tuple[int, int]]:
-    order_pages = config.get("jd_order_pages")
+    order_pages = config.get("order_pages")
     if not order_pages:
         return [(2025, 2)]
 
     if not isinstance(order_pages, dict):
-        raise ValueError("config.yaml 中 jd_order_pages 必须是年份到页数的 mapping")
+        raise ValueError("config.yaml 中 flows.jd_pdf.order_pages 必须是年份到页数的 mapping")
 
     jobs: list[tuple[int, int]] = []
     for year, pages in order_pages.items():
@@ -167,7 +137,7 @@ def normalize_pages(pages: Any) -> list[int]:
             raise ValueError("页码必须大于等于 1")
         return page_numbers
 
-    raise ValueError("jd_order_pages 的值必须是整数页数，或页码列表")
+    raise ValueError("flows.jd_pdf.order_pages 的值必须是整数页数，或页码列表")
 
 
 def build_order_url(year: int, page: int) -> str:
@@ -271,11 +241,11 @@ def wait_for_jd_login_if_needed(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Render JD order pages and save them as PDFs.")
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--url",
         default=None,
-        help="只打印指定的京东订单 URL；传入后会忽略 config.yaml 的 jd_order_pages。",
+        help="只打印指定的京东订单 URL；传入后会忽略 config.yaml 的 flows.jd_pdf.order_pages。",
     )
     parser.add_argument(
         "--headless",
@@ -305,22 +275,21 @@ def main() -> int:
     args = parse_args()
 
     try:
-        load_dotenv(ENV_PATH)
         config = load_config()
         output_dir = get_output_dir(config)
         browser_user_data_dir = get_browser_user_data_dir(config)
         jobs = build_jobs(args, config, output_dir)
 
-        headless = get_bool(config, "jd_pdf_headless", DEFAULT_HEADLESS)
+        headless = get_bool(config, "headless", DEFAULT_HEADLESS)
         if args.headless:
             headless = True
         if args.headed:
             headless = False
 
-        wait_seconds = get_float(config, "jd_pdf_wait_seconds", DEFAULT_WAIT_SECONDS)
+        wait_seconds = get_float(config, "wait_seconds", DEFAULT_WAIT_SECONDS)
         login_timeout_seconds = get_int(
             config,
-            "jd_login_timeout_seconds",
+            "login_timeout_seconds",
             DEFAULT_LOGIN_TIMEOUT_SECONDS,
         )
 

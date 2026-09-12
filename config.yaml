@@ -1,22 +1,26 @@
-jd_pdf_output_dir: {JD_PDF_OUTPUT_DIR}
-jd_browser_user_data_dir: ./raw_data/jd_browser_profile
-jd_pdf_headless: false
-jd_pdf_wait_seconds: 5
-jd_login_timeout_seconds: 300
-jd_order_pages:
-  2024: 4
-  2023: 5
-  2022: 4
-  2021: 4
-  2020: 6
-  2019: 5
-  2018: 3
-  2017: 3
-  2016: 2
-  2015: 2
-
 app:
   log_level: ${LOG_LEVEL:-INFO}
+  output_dir: ${OUTPUT_DIR:-./output}
+  log_dir: ${LOG_DIR:-./logs}
+
+flows:
+  jd_pdf:
+    output_dir: ${JD_PDF_OUTPUT_DIR:-./raw_data/jd_pdf}
+    browser_user_data_dir: ${JD_BROWSER_USER_DATA_DIR:-./raw_data/jd_browser_profile}
+    headless: ${JD_PDF_HEADLESS:-false}
+    wait_seconds: ${JD_PDF_WAIT_SECONDS:-5}
+    login_timeout_seconds: ${JD_LOGIN_TIMEOUT_SECONDS:-300}
+    order_pages:
+      2024: 4
+      2023: 5
+      2022: 4
+      2021: 4
+      2020: 6
+      2019: 5
+      2018: 3
+      2017: 3
+      2016: 2
+      2015: 2
 
 llamacpp:
   base_url: ${LLAMACPP_BASE_URL:-http://127.0.0.1:8080/v1}
@@ -36,8 +40,8 @@ llamacpp:
   reasoning_budget: ${LLAMACPP_REASONING_BUDGET:-0}
   startup_timeout_sec: ${LLAMACPP_STARTUP_TIMEOUT_SEC:-180}
   startup_poll_interval_sec: ${LLAMACPP_STARTUP_POLL_INTERVAL_SEC:-1}
-  stdout_log_path: ${LLAMACPP_STDOUT_LOG_PATH:-./log/llama_server.out.log}
-  stderr_log_path: ${LLAMACPP_STDERR_LOG_PATH:-./log/llama_server.err.log}
+  stdout_log_path: ${LLAMACPP_STDOUT_LOG_PATH:-./logs/llama_server.out.log}
+  stderr_log_path: ${LLAMACPP_STDERR_LOG_PATH:-./logs/llama_server.err.log}
 
 financial_email:
   output_dir: ${FINANCIAL_EMAIL_OUTPUT_DIR:-./raw_data/financial_email}

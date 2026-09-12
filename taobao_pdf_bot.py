@@ -39,7 +39,7 @@ SRC_PATH = str(PROJECT_ROOT / "src")
 if SRC_PATH not in sys.path:
     sys.path.insert(0, SRC_PATH)
 
-from localai.logging_config import get_logger, setup_logger
+from logging_config import get_logger, setup_logger
 
 # ================= 配置区域 =================
 # 请根据电脑性能和网络速度调整以下延迟时间（单位：秒）

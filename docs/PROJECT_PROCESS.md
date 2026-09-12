@@ -32,7 +32,7 @@
 - `src/localai/modules/` 放置本地 AI、配置、JSON 解析等可复用模块。
 - `src/localai/flows/` 放置围绕具体任务的流程编排。
 - `config.yaml` 和 `common.env` 分离通用配置与本机私有配置。
-- `raw_data/` 和 `log/` 作为本地运行产物目录，并通过 `.gitignore` 排除。
+- `raw_data/` 和 `logs/` 作为本地运行产物目录，并通过 `.gitignore` 排除。
 
 这个结构保证了后续新增平台或新增处理流程时，可以优先复用已有的配置、日志、本地 AI 客户端和文件输出逻辑。
 
@@ -44,7 +44,7 @@
 
 - 使用 Playwright 启动 Chromium 持久化上下文。
 - 浏览器用户数据目录保存在 `raw_data/jd_browser_profile`，用于复用登录状态。
-- 根据 `config.yaml` 中的 `jd_order_pages` 配置生成年份和页码任务。
+- 根据 `config.yaml` 中的 `flows.jd_pdf.order_pages` 配置生成年份和页码任务。
 - 访问京东订单列表 URL，等待页面加载和必要的手工登录。
 - 使用 Playwright 的 `page.pdf()` 直接渲染 A4 PDF。
 - PDF 文件按年份、页码和时间戳命名，输出到环境变量配置的目录。
@@ -104,7 +104,7 @@
 - 提示词要求模型只输出 JSON，不输出 Markdown 或解释。
 - JSON 解析模块会兼容模型输出中可能出现的代码块或额外文本。
 - 每张截图单独保存一个 JSON 文件。
-- 识别进度和结果摘要写入 `log/order_image_ai.log`。
+- 识别进度和结果摘要写入 `logs/order_image_ai.log`。
 
 默认 JSON 产物保存在：
 
@@ -149,7 +149,7 @@
 3. 连续截图必须保留一定重叠。订单卡片高度不固定，滑动距离过大容易漏掉金额、状态或订单标题。
 4. 到底判断不能只依赖固定页数。通过截图相似度判断可以减少无效截图，同时保留手工继续的入口。
 5. 本地 AI 输出必须有强约束。提示词、JSON 提取、warnings 字段和 raw output fallback 是保证批量处理可追踪的关键。
-6. 真实路径和隐私数据必须和代码隔离。`common.env`、`raw_data/`、`log/` 和浏览器 profile 都不应进入版本库。
+6. 真实路径和隐私数据必须和代码隔离。`common.env`、`raw_data/`、`logs/` 和浏览器 profile 都不应进入版本库。
 
 ## 当前限制
 

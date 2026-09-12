@@ -55,7 +55,6 @@ class FinancialEmailImapClient:
         started_at = time.monotonic()
         last_progress_at = started_at
         for uid in uids:
-            index = len(messages) + 1
             status, fetched = client.uid("fetch", uid, "(RFC822)")
             if status != "OK" or not fetched:
                 logger.warning("Skipping IMAP uid=%s fetch status=%s", uid.decode("ascii", errors="ignore"), status)

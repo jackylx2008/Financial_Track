@@ -93,7 +93,7 @@ common.env
 financial_attachment_passwords.env
 raw_data/
 processed_data/
-log/
+logs/
 vendor/
 浏览器 profile、订单截图、账单 PDF、邮箱附件、授权码和密码
 ```

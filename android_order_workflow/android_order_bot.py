@@ -24,8 +24,8 @@
   --stable-threshold  判定页面不再变化的相似度阈值，默认 0.995。
 
 示例：
-  python pdd_order_bot.py capture --device 10CF8C17KP004G0
-  python meituan_order_bot.py capture-until-end --device 10CF8C17KP004G0
+  python pdd_order_bot.py capture --device <device_serial>
+  python meituan_order_bot.py capture-until-end --device <device_serial>
 
 输出：
   将 PNG 截图写入输出目录，并在控制台打印生成的截图路径、相似度和停止原因等运行信息。
@@ -83,7 +83,7 @@ def resolve_platform(value: str) -> PlatformConfig:
 
 
 def add_common_adb_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--device", help="ADB device serial, for example 10CF8C17KP004G0")
+    parser.add_argument("--device", help="ADB device serial, for example <device_serial>")
     parser.add_argument("--adb", help="adb.exe path. Defaults to PATH, then MuMu bundled ADB.")
 
 

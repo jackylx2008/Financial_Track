@@ -2,7 +2,7 @@
 
 更新日期：2026-05-17
 
-本文档归档邮件流水链路阶段性工作记录。当前继续开发时，主入口文档为根目录 `README.md` 和 `TODO.md`。
+本文档归档邮件流水链路阶段性工作记录。当前继续开发时，主入口文档为根目录 `README.md` 和 `docs/TODO.md`。
 
 ## 目标和边界
 
@@ -10,7 +10,7 @@
 
 它不直接承担最终财务分类，也不直接替代订单数据。银行、支付宝、美团等邮件流水先进入 normalized 层，后续再和订单中间层做匹配，并进入最终 ledger 层。
 
-真实邮件、附件、日志、密码和整理后的原始数据只保留在本机 `raw_data/`、`log/` 和本地 env 文件中，不提交到 git。
+真实邮件、附件、日志、密码和整理后的原始数据只保留在本机 `raw_data/`、`logs/` 和本地 env 文件中，不提交到 git。
 
 ## 入口和目录
 
@@ -18,13 +18,14 @@
 
 ```powershell
 python financial_email_bot.py
+python financial_attachment_crack.py --check-tools
 ```
 
 邮件流水工作代码目录：
 
 ```text
 financial_email_workflow/
-  gpu_zip_pdf_cracker.py
+  gpu_zip_pdf_cracker.py  # 旧路径兼容入口
   financial_attachment_prepare.py
   financial_attachment_extract.py
   consolidate_bank_transactions.py
@@ -201,7 +202,7 @@ normalize:
 邮件流水链路：
 
 ```powershell
-python -m py_compile financial_email_bot.py financial_email_workflow\gpu_zip_pdf_cracker.py financial_email_workflow\financial_attachment_prepare.py financial_email_workflow\financial_attachment_extract.py financial_email_workflow\consolidate_bank_transactions.py
+python -m py_compile financial_email_bot.py financial_attachment_crack.py financial_email_workflow\financial_attachment_prepare.py financial_email_workflow\financial_attachment_extract.py financial_email_workflow\consolidate_bank_transactions.py
 python financial_email_bot.py --stage prepare
 python financial_email_bot.py --stage crack
 python financial_email_bot.py --stage extract

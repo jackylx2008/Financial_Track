@@ -31,7 +31,6 @@ def build_review_workbook(
     workbook.remove(workbook.active)
 
     order_facts = [item for item in facts if item.get("fact_type") == "order_purchase"]
-    bank_payment_facts = [item for item in facts if item.get("fact_type") == "bank_payment"]
     linked = [item for item in links if item.get("match_strength") == "linked"]
     candidates = [item for item in links if item.get("match_strength") == "candidate"]
     unmatched_orders = [item for item in order_facts if item.get("link_status") == "unmatched"]
