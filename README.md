@@ -26,6 +26,7 @@ Financial_Track/
   normalize_transactions.py       # 统一 normalized 中间层构建入口
   ledger_build.py                 # 最终账本 ledger 构建入口
   ledger_review_export.py         # 账本人工校核 Excel 导出入口
+  main.py                         # 全部财务工作流的 Tkinter 图形入口
   logging_config.py               # 项目统一日志配置
   src/localai/
     entrypoints.py           # 入口脚本公共启动辅助
@@ -67,6 +68,19 @@ processed_data/review/ledger_review.xlsx   # 按月份拆分的人工校核表
 ```
 
 如果已经手工维护好附件密码，可以用 `--skip-crack` 跳过 GPU 破解；需要尝试破解时去掉该参数，并确保 `config.yaml` 中的 hashcat/john 路径可用。
+
+## 图形界面
+
+启动统一桌面控制台：
+
+```powershell
+python main.py
+```
+
+界面从上到下固定为工作流选项卡、当前参数、共享实时日志、总体进度与状态栏。所有耗时流程通过后台
+CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务。GUI 不保存或展示邮箱授权码、附件密码等秘密值，
+这些信息仍由本地 `common.env` 和专用密码文件提供。详细规范见
+[`docs/GUI_DESIGN_REQUIREMENTS.md`](docs/GUI_DESIGN_REQUIREMENTS.md)。
 
 ## 环境准备
 
