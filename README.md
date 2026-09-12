@@ -5,7 +5,8 @@
 - 京东、淘宝订单页面导出为 PDF。
 - 通过安卓手机 ADB 截取拼多多、美团订单页面截图，作为后续 OCR 和 AI 结构化识别的输入。
 - 调用本地 `llama.cpp` OpenAI 兼容接口，对订单截图做结构化识别。
-- 采集流水邮件、解密/解压账单附件，并整理为统一银行流水中间层。
+- 采集流水邮件、准备附件密码、解密/解压账单附件，并整理为统一银行流水中间层。
+- 汇总银行流水与订单结构化结果，构建 normalized 中间层、最终 ledger 账本和人工校核 Excel。
 
 本项目面向个人账号自用，不包含平台逆向接口、抓包或绕过风控逻辑。
 
@@ -19,8 +20,8 @@ Financial_Track/
   order_capture/             # ADB 截图基础模块
   jd_pdf_bot.py              # 京东订单 PDF 导出
   taobao_pdf_bot.py          # 淘宝订单 PDF 辅助打印
-  financial_email_bot.py          # 流水邮件原始数据采集
-  financial_email_workflow/       # 邮件流水处理工作代码
+  financial_email_bot.py          # 邮件流水采集、附件处理和银行流水归一化入口
+  financial_email_workflow/       # 邮件流水和附件处理兼容入口
   normalize_transactions.py       # 统一 normalized 中间层构建入口
   ledger_build.py                 # 最终账本 ledger 构建入口
   ledger_review_export.py         # 账本人工校核 Excel 导出入口
@@ -31,12 +32,37 @@ Financial_Track/
     modules/                 # 可复用基础能力模块
   config.yaml                # 项目运行配置
   common.env.example         # 本地环境变量模板
-  raw_data/                  # 本地采集数据，已被 git 忽略
-  processed_data/            # 归一化、中间层和审核输出，已被 git 忽略
+  raw_data/                  # 本地采集数据、邮件、附件和 AI JSON，已被 git 忽略
+  processed_data/            # normalized、ledger、review 和 reports 输出，已被 git 忽略
   log/                       # 运行日志，已被 git 忽略
 ```
 
 项目采用“根目录独立入口脚本 + `src/localai/flows` 编排层 + `src/localai/modules` 基础模块”的结构。入口脚本只负责读取配置、初始化日志、创建上下文并调用对应流程，核心处理逻辑应放在 `flows` 或 `modules` 中。
+
+## 当前主线流程
+
+推荐按下面顺序处理完整数据链路：
+
+```powershell
+python financial_email_bot.py --stage all --skip-crack
+python order_image_ai.py pdd --all --max-tokens 1024
+python order_image_ai.py meituan --all --max-tokens 1024
+python normalize_transactions.py
+python ledger_build.py
+python ledger_review_export.py
+```
+
+主要数据分层：
+
+```text
+raw_data/financial_email/                  # 邮件、正文、附件和附件提取结果
+raw_data/order_json/pdd|meituan/           # 截图 AI 识别后的订单 JSON
+processed_data/normalized/                 # bank/orders/financial_transactions/link 中间层
+processed_data/ledger/                     # 最终账本 ledger_entries 和质量报告
+processed_data/review/ledger_review.xlsx   # 按月份拆分的人工校核表
+```
+
+如果已经手工维护好附件密码，可以用 `--skip-crack` 跳过 GPU 破解；需要尝试破解时去掉该参数，并确保 `config.yaml` 中的 hashcat/john 路径可用。
 
 ## 环境准备
 
@@ -297,7 +323,7 @@ log/order_image_ai.log
 
 `raw_data/`、`processed_data/`、`log/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
 
-当前安卓截图只是采集阶段，后续 OCR、AI 识别和订单级去重应基于这些截图继续扩展。
+安卓截图已经可以进入本地 AI 识别并整理为订单 JSON；最终账本仍以银行/支付流水为主来源，订单只作为购物、外卖、平台服务等场景的明细补充，避免重复统计。
 
 ## 邮件流水采集
 
