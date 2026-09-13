@@ -11,7 +11,7 @@ Financial Track 是个人消费与银行流水的本地化采集、整理和账�
 - 京东订单页通过 Playwright 导出 PDF，保留浏览器登录态复用能力。
 - 淘宝订单页通过 `pyautogui` 半自动打印 PDF，适合人工可控的批量归档。
 - 拼多多、美团通过 ADB 截图，支持单张、固定页数滚动和自动滚动到底。
-- 拼多多、美团截图可调用本地 `llama.cpp` OpenAI 兼容视觉模型识别为订单 JSON。
+- 拼多多、美团截图可调用外部项目提供的 OpenAI 兼容视觉模型识别为订单 JSON。
 - 邮件流水可通过 IMAP 或本地 `.eml` 导入，保存原文、正文、附件和候选交易。
 - 邮件附件支持密码清单准备、按密码规则解密/解压，以及可选 GPU 破解阶段。
 - 银行流水和订单 JSON 已汇总到 `processed_data/normalized/` 中间层。
@@ -22,31 +22,31 @@ Financial Track 是个人消费与银行流水的本地化采集、整理和账�
 ## 主要入口
 
 ```text
-financial_email_bot.py         # 邮件流水采集、附件处理、银行流水归一化
-order_image_ai.py              # 订单截图 AI 识别
-normalize_transactions.py      # 统一 normalized 中间层
-ledger_build.py                # 最终账本构建
-ledger_review_export.py        # 人工校核 Excel 导出
+flows/financial_email_bot.py         # 邮件流水采集、附件处理、银行流水归一化
+flows/order_image_ai.py              # 订单截图 AI 识别
+flows/normalize_transactions.py      # 统一 normalized 中间层
+flows/ledger_build.py                 # 最终账本构建
+flows/ledger_review_export.py         # 人工校核 Excel 导出
 ```
 
 ## 推荐运行顺序
 
 ```powershell
-python financial_email_bot.py --stage all --skip-crack
-python order_image_ai.py pdd --all --max-tokens 1024
-python order_image_ai.py meituan --all --max-tokens 1024
-python normalize_transactions.py
-python ledger_build.py
-python ledger_review_export.py
+python flows/financial_email_bot.py --stage all --skip-crack
+python flows/order_image_ai.py pdd --all --max-tokens 1024
+python flows/order_image_ai.py meituan --all --max-tokens 1024
+python flows/normalize_transactions.py
+python flows/ledger_build.py
+python flows/ledger_review_export.py
 ```
 
 需要破解账单附件密码时，先确认 `config.yaml` 中的 hashcat/john 路径，再运行：
 
 ```powershell
-python financial_email_bot.py --stage crack
-python financial_email_bot.py --stage prepare
-python financial_email_bot.py --stage extract
-python financial_email_bot.py --stage normalize
+python flows/financial_email_bot.py --stage crack
+python flows/financial_email_bot.py --stage prepare
+python flows/financial_email_bot.py --stage extract
+python flows/financial_email_bot.py --stage normalize
 ```
 
 ## 当前数据产物
@@ -74,13 +74,13 @@ processed_data/review/ledger_review.xlsx
 - 银行邮件正文候选交易通常字段不完整，附件解析结果比正文正则候选更可靠。
 - 最终账本分类仍以规则为主，复杂场景需要人工校核或后续补充规则。
 - 人工校核 Excel 已能导出，但人工修正回读为 `manual_overrides.json` 的闭环仍未完成。
-- 统计报表 `ledger_report_export.py` 尚未实现。
+- 统计报表 `flows/ledger_report_export.py` 尚未实现。
 
 ## 下一步
 
 1. 实现 `ledger_review_import.py`，读取人工校核 Excel 并生成 `processed_data/ledger/manual_overrides.json`。
-2. 在 `ledger_build.py` 中优先应用人工修正，形成可迭代的账本校核闭环。
-3. 实现 `ledger_report_export.py`，输出总览、按月、按日、分类、人员、项目等统计报表。
+2. 在 `flows/ledger_build.py` 中优先应用人工修正，形成可迭代的账本校核闭环。
+3. 实现 `flows/ledger_report_export.py`，输出总览、按月、按日、分类、人员、项目等统计报表。
 4. 持续根据人工校核结果完善分类关键词和目标人识别规则。
 5. 推进京东、淘宝 PDF 的订单级结构化解析，并接入统一订单 schema。
 

@@ -2,7 +2,7 @@
 
 用途：
   启动个人财务信息追溯桌面控制台，通过统一窗口运行邮件流水、附件破解、订单采集与识别、
-  交易归一、账本构建、审核导出、订单归档和本地 AI 自检工作流。
+  交易归一、账本构建、审核导出、订单归档和外部 AI 服务自检工作流。
 
 配置文件：
   固定读取项目根目录 ``config.yaml``；本机路径、邮箱授权码和模型路径由被 Git 忽略的
@@ -21,16 +21,12 @@
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_PATH = str(PROJECT_ROOT / "src")
-if SRC_PATH not in sys.path:
-    sys.path.insert(0, SRC_PATH)
 
-from localai.gui.app import run
+from flows.gui.app import run
 
 
 if __name__ == "__main__":

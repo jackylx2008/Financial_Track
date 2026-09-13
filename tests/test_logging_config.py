@@ -4,6 +4,7 @@ import logging
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from logging_config import MAX_LOG_BYTES, get_logger, setup_logger
 
@@ -29,6 +30,40 @@ class LoggingConfigTests(unittest.TestCase):
             self.assertEqual(file_handlers[0].maxBytes, MAX_LOG_BYTES)
             self.assertEqual(file_handlers[0].backupCount, 5)
             self._close_root_handlers()
+
+    def test_default_log_file_is_created_below_project_logs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            project_root = Path(directory)
+            with (
+                patch("logging_config.DEFAULT_LOG_DIR", project_root / "logs"),
+                patch("logging_config.sys.argv", ["demo_entry.py"]),
+            ):
+                setup_logger("INFO")
+                get_logger(__name__).info("default path")
+                for handler in logging.getLogger().handlers:
+                    handler.flush()
+
+            log_path = project_root / "logs" / "demo_entry.log"
+            self.assertIn("default path", log_path.read_text(encoding="utf-8"))
+            self._close_root_handlers()
+
+    def test_log_directory_and_entry_name_build_log_path(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            log_dir = Path(directory) / "logs"
+            setup_logger("INFO", entry_name="workflow", log_dir=log_dir)
+            get_logger(__name__).info("workflow path")
+            for handler in logging.getLogger().handlers:
+                handler.flush()
+
+            self.assertIn(
+                "workflow path",
+                (log_dir / "workflow.log").read_text(encoding="utf-8"),
+            )
+            self._close_root_handlers()
+
+    def test_log_file_and_log_directory_are_mutually_exclusive(self) -> None:
+        with self.assertRaisesRegex(ValueError, "不能同时指定"):
+            setup_logger("INFO", "app.log", log_dir="logs")
 
     def test_unknown_log_level_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "未知日志级别"):

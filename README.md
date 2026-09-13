@@ -4,7 +4,7 @@
 
 - 京东、淘宝订单页面导出为 PDF。
 - 通过安卓手机 ADB 截取拼多多、美团订单页面截图，作为后续 OCR 和 AI 结构化识别的输入。
-- 调用本地 `llama.cpp` OpenAI 兼容接口，对订单截图做结构化识别。
+- 调用外部项目提供的 OpenAI 兼容 AI 服务，对订单截图做结构化识别。
 - 采集流水邮件、准备附件密码、解密/解压账单附件，并整理为统一银行流水中间层。
 - 汇总银行流水与订单结构化结果，构建 normalized 中间层、最终 ledger 账本和人工校核 Excel。
 
@@ -14,25 +14,16 @@
 
 ```text
 Financial_Track/
-  android_order_workflow/    # 安卓截图流水采集通用实现
-  pdd_order_bot.py           # 拼多多截图兼容入口
-  meituan_order_bot.py       # 美团截图入口
-  order_capture/             # ADB 截图基础模块
-  jd_pdf_bot.py              # 京东订单 PDF 导出
-  taobao_pdf_bot.py          # 淘宝订单 PDF 辅助打印
-  financial_email_bot.py          # 邮件流水采集、附件处理和银行流水归一化入口
-  financial_attachment_crack.py   # 加密账单附件密码处理入口
-  financial_email_workflow/       # 邮件流水和附件处理兼容入口
-  normalize_transactions.py       # 统一 normalized 中间层构建入口
-  ledger_build.py                 # 最终账本 ledger 构建入口
-  ledger_review_export.py         # 账本人工校核 Excel 导出入口
-  main.py                         # 全部财务工作流的 Tkinter 图形入口
-  logging_config.py               # 项目统一日志配置
-  src/localai/
-    entrypoints.py           # 入口脚本公共启动辅助
-    context.py               # 统一项目上下文和路径解析
-    flows/                   # 场景编排层
-    modules/                 # 可复用基础能力模块
+  main.py                    # 唯一根目录程序入口，启动 Tkinter GUI
+  logging_config.py          # 项目统一日志配置
+  flows/
+    *.py                     # 可独立执行的工作流入口
+    workflows/               # 场景编排层
+    modules/                 # 财务领域与通用基础模块
+    gui/                     # 图形界面实现
+    android_order/           # 安卓订单截图采集实现
+    order_capture/           # ADB 截图基础模块
+    financial_email/         # 邮件与附件分阶段入口
   tests/                     # 单元测试与工作流级测试
   docs/                      # 架构、配置、进度和历史文档
   config.yaml                # 项目运行配置
@@ -42,19 +33,20 @@ Financial_Track/
   logs/                      # 运行日志，已被 git 忽略
 ```
 
-项目采用“根目录独立入口脚本 + `src/localai/flows` 编排层 + `src/localai/modules` 基础模块”的结构。入口脚本只负责读取配置、初始化日志、创建上下文并调用对应流程，核心处理逻辑应放在 `flows` 或 `modules` 中。
+项目采用“根目录单一 GUI 入口 + `flows/` 工作流入口 + `flows/workflows/` 编排层 +
+`flows/modules/` 基础模块”的结构。除 `main.py` 和 `logging_config.py` 外，根目录不再放置 Python 文件。
 
 ## 当前主线流程
 
 推荐按下面顺序处理完整数据链路：
 
 ```powershell
-python financial_email_bot.py --stage all --skip-crack
-python order_image_ai.py pdd --all --max-tokens 1024
-python order_image_ai.py meituan --all --max-tokens 1024
-python normalize_transactions.py
-python ledger_build.py
-python ledger_review_export.py
+python flows/financial_email_bot.py --stage all --skip-crack
+python flows/order_image_ai.py pdd --all --max-tokens 1024
+python flows/order_image_ai.py meituan --all --max-tokens 1024
+python flows/normalize_transactions.py
+python flows/ledger_build.py
+python flows/ledger_review_export.py
 ```
 
 主要数据分层：
@@ -101,7 +93,7 @@ pip install playwright pyyaml pyautogui pillow
 
 ## 配置、日志与本地文件
 
-项目配置入口是根目录 `config.yaml`。本机路径、账号、授权码、服务路径等本地差异放在 `common.env`，仓库只保留 `common.env.example` 作为模板：
+项目配置入口是根目录 `config.yaml`。本机路径、账号、授权码和外部服务地址等本地差异放在 `common.env`，仓库只保留 `common.env.example` 作为模板：
 
 ```powershell
 Copy-Item common.env.example common.env
@@ -115,7 +107,7 @@ CLOUDSTATION_ROOT_MACOS=~/SynologyDrive
 CLOUDSTATION_ROOT_LINUX=~/CloudStation
 ```
 
-统一日志配置位于项目根目录 `logging_config.py`。`src/localai/logging_config.py` 仅保留旧导入兼容。默认日志写入根目录 `logs/`，日志文件名通常对应入口脚本名，例如：
+统一日志配置仅位于项目根目录 `logging_config.py`。默认日志写入项目根目录 `logs/`，不会写入 `flows/logs/`。日志文件名通常对应入口脚本名，例如：
 
 ```text
 logs/ai_self_check.log
@@ -130,7 +122,7 @@ logs/financial_email_bot.log
 项目使用标准库 `unittest`，测试数据均为临时目录或脱敏的最小样本：
 
 ```powershell
-$env:PYTHONPATH='src'
+$env:PYTHONPATH='.'
 python -m unittest discover -s tests -v
 python -m compileall -q -f -x 'vendor|raw_data|processed_data|logs?|__pycache__' .
 python -m flake8 .
@@ -165,19 +157,14 @@ adb devices
 
 ## 安卓订单截图
 
-通用入口支持拼多多和美团：
+平台入口支持拼多多和美团：
 
 ```powershell
-python pdd_order_bot.py capture --device <device_serial>
-python meituan_order_bot.py capture --device <device_serial>
+python flows/pdd_order_bot.py capture --device <device_serial>
+python flows/meituan_order_bot.py capture --device <device_serial>
 ```
 
-也可以使用平台专用入口：
-
-```powershell
-python pdd_order_bot.py capture --device <device_serial>
-python meituan_order_bot.py capture --device <device_serial>
-```
+完整采集参数见 [`docs/ORDER_CAPTURE.md`](docs/ORDER_CAPTURE.md)。
 
 默认输出：
 
@@ -195,15 +182,15 @@ raw_data/meituan/meituan_*.png
 ### 固定页数连续截图
 
 ```powershell
-python pdd_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
-python meituan_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
+python flows/pdd_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
+python flows/meituan_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
 ```
 
 ### 自动截图到列表底部
 
 ```powershell
-python pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 80 --wait 1.5
-python meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --wait 1.5
+python flows/pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 80 --wait 1.5
+python flows/meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --wait 1.5
 ```
 
 脚本通过比较相邻截图主体区域判断是否已经到底。美团如果提示“显示更多历史订单”，脚本会暂停；手工点击手机上的按钮后，在终端输入 `c` 继续。直接回车则停止。
@@ -213,8 +200,8 @@ python meituan_order_bot.py capture-until-end --device <device_serial> --max-pag
 滑动距离不合适时，可以调参数：
 
 ```powershell
-python pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 120 --wait 1.5 --start-y 1700 --end-y 950
-python meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --start-y 1800 --end-y 450
+python flows/pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 120 --wait 1.5 --start-y 1700 --end-y 950
+python flows/meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --start-y 1800 --end-y 450
 ```
 
 ## 京东订单 PDF
@@ -244,13 +231,13 @@ flows:
 运行：
 
 ```powershell
-python jd_pdf_bot.py
+python flows/jd_pdf_bot.py
 ```
 
 首次运行建议保持有头模式，手工登录京东。只导出指定 URL：
 
 ```powershell
-python jd_pdf_bot.py --url "https://order.jd.com/center/list.action?d=2024&s=4096&page=1"
+python flows/jd_pdf_bot.py --url "https://order.jd.com/center/list.action?d=2024&s=4096&page=1"
 ```
 
 ## 淘宝订单 PDF
@@ -260,81 +247,57 @@ python jd_pdf_bot.py --url "https://order.jd.com/center/list.action?d=2024&s=409
 运行：
 
 ```powershell
-python taobao_pdf_bot.py
+python flows/taobao_pdf_bot.py
 ```
 
 启动后把鼠标放在订单页“下一页”按钮上，脚本会循环点击下一页、触发 `Ctrl+P`、保存 PDF。按 `Ctrl+C` 可停止，鼠标移到屏幕左上角可触发 `pyautogui` 紧急停止。
 
-## 本地 AI 自检
+## 外部 AI 服务自检
 
-本地 AI 运行时用于后续订单截图 OCR 后的结构化识别。当前使用 `llama.cpp` 的 OpenAI 兼容 HTTP API。
-
-配置说明见：
-
-```text
-docs/LOCAL_AI_RUNTIME_SETUP.md
-```
-
-真实本机路径写入 `common.env`，不要提交到 git。关键变量包括：
+本项目只调用其他项目已启动的 OpenAI 兼容 AI 服务，不负责安装模型、启动服务、管理 CUDA
+运行时或结束服务进程。连接配置写入本地 `common.env`，不要提交到 Git：
+详细接口约定见 [`docs/EXTERNAL_AI_SERVICE.md`](docs/EXTERNAL_AI_SERVICE.md)。
 
 ```env
 LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
 LLAMACPP_MODEL=local-model
-LLAMACPP_AUTOSTART=true
-LLAMACPP_SERVER_PATH=
-LLAMACPP_MODEL_PATH=
-LLAMACPP_MMPROJ_PATH=
-LLAMACPP_EXTRA_DLL_DIRS=./vendor/cuda12
-LLAMACPP_N_GPU_LAYERS=999
-LLAMACPP_CTX_SIZE=8192
+LLAMACPP_API_KEY=
 ```
 
-`vendor/cuda12/` 只放本机运行需要的 CUDA runtime DLL，不提交到 git。需要的 DLL 从 NVIDIA 官方 CUDA Toolkit 获取：
+外部服务需提供 `/health`、`/v1/models` 和 `/v1/chat/completions` 接口。
 
-```text
-https://developer.nvidia.com/cuda-toolkit-archive
-```
-
-安装或解压 CUDA Toolkit 12.x 后，复制以下文件到 `vendor/cuda12/`：
-
-```text
-cudart64_12.dll
-cublas64_12.dll
-cublasLt64_12.dll
-```
-
-只检查 CUDA、服务健康状态和模型列表：
+只检查服务健康状态和模型列表：
 
 ```powershell
-python ai_self_check.py --no-chat
+python flows/ai_self_check.py --no-chat
 ```
 
 完整对话测试：
 
 ```powershell
-python ai_self_check.py --prompt "请直接回答两个字：可用" --max-tokens 32
+python flows/ai_self_check.py --prompt "请直接回答两个字：可用" --max-tokens 32
 ```
 
-脚本会在需要时自动启动 `llama-server`，并在本次流程结束时关闭由它启动的服务以释放显存。
+如果服务不可用，脚本会提示先在专用运行时项目中启动服务，不会尝试创建或关闭服务进程。
 
 ### 订单截图 AI 识别
 
 识别最新一张拼多多截图：
 
 ```powershell
-python order_image_ai.py pdd --max-tokens 1024
+python flows/order_image_ai.py pdd --max-tokens 1024
 ```
 
 识别整个拼多多截图目录，默认会在终端显示进度条：
 
 ```powershell
-python order_image_ai.py pdd --all --max-tokens 1024
+python flows/order_image_ai.py pdd --all --max-tokens 1024
 ```
 
 关闭终端进度条：
 
 ```powershell
-python order_image_ai.py pdd --all --max-tokens 1024 --no-progress
+python flows/order_image_ai.py pdd --all --max-tokens 1024 --no-progress
 ```
 
 识别结果默认输出到：
@@ -356,11 +319,12 @@ logs/order_image_ai.log
 
 `raw_data/`、`processed_data/`、`logs/`、环境文件和输出目录已在 `.gitignore` 中排除。订单截图、浏览器登录状态、PDF 输出等本地隐私数据不应提交到 git。
 
-安卓截图已经可以进入本地 AI 识别并整理为订单 JSON；最终账本仍以银行/支付流水为主来源，订单只作为购物、外卖、平台服务等场景的明细补充，避免重复统计。
+安卓截图已经可以通过外部 AI 服务识别并整理为订单 JSON；最终账本仍以银行/支付流水为主来源，订单只作为购物、外卖、平台服务等场景的明细补充，避免重复统计。
 
 ## 邮件流水采集
 
-银行交易提醒、信用卡账单、支付平台账单等邮件可以作为另一类底层原始数据。项目提供 `financial_email_bot.py`，通过 IMAP 读取邮箱，把匹配到的流水邮件保存为本地原始产物：
+银行交易提醒、信用卡账单、支付平台账单等邮件可以作为另一类底层原始数据。项目提供
+`flows/financial_email_bot.py`，通过 IMAP 读取邮箱，把匹配到的流水邮件保存为本地原始产物：
 
 ```text
 raw_data/financial_email/eml/                  # 邮件原文 .eml
@@ -389,13 +353,13 @@ FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动�
 运行：
 
 ```powershell
-python financial_email_bot.py --since 2024-01-01 --max-messages 500
+python flows/financial_email_bot.py --since 2024-01-01 --max-messages 500
 ```
 
 也可以先解析已经导出的 `.eml` 文件，避免直接连接邮箱：
 
 ```powershell
-python financial_email_bot.py --eml-dir raw_data/email_export
+python flows/financial_email_bot.py --eml-dir raw_data/email_export
 ```
 
 当前邮件解析会先按 `config.yaml` 中的 `financial_email.rules` 匹配流水邮件；如果没有命中来源规则，则使用 `FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON` 中的标题关键字兜底捕捉账单/流水邮件。解析器会递归保存邮件中的 PDF 等附件，再用通用金额、时间、卡尾号正则抽取 `candidate_transactions`。这一步是“原始数据层”，不是最终账本；后续应按具体邮件模板增加专用 parser，并把候选交易合并进统一流水 schema。
@@ -423,7 +387,7 @@ FINANCIAL_ATTACHMENT_ZIP_PWD=["zip-password-1","zip-password-2"]
 生成附件清单并检查哪些附件还缺密码：
 
 ```powershell
-python financial_email_bot.py --stage prepare
+python flows/financial_email_bot.py --stage prepare
 ```
 
 默认输出：
@@ -438,7 +402,7 @@ raw_data/financial_email/attachment_inventory.md
 尝试解密/解压附件：
 
 ```powershell
-python financial_email_bot.py --stage extract
+python flows/financial_email_bot.py --stage extract
 ```
 
 默认输出：
@@ -455,7 +419,7 @@ raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 已下载的邮件正文候选交易和已成功解密/解压的 PDF、ZIP 内部文件可以整理为统一银行流水中间层：
 
 ```powershell
-python financial_email_bot.py --stage normalize
+python flows/financial_email_bot.py --stage normalize
 ```
 
 默认读取：
@@ -480,7 +444,7 @@ processed_data/normalized/bank_transactions_quality_report.md
 银行流水、订单截图 AI JSON 等结构化结果可以统一汇总到 normalized 中间层：
 
 ```powershell
-python normalize_transactions.py
+python flows/normalize_transactions.py
 ```
 
 默认输出：
@@ -498,7 +462,7 @@ processed_data/normalized/normalized_quality_report.md
 构建最终账本：
 
 ```powershell
-python ledger_build.py
+python flows/ledger_build.py
 ```
 
 默认读取：
@@ -521,7 +485,7 @@ processed_data/ledger/ledger_quality_report.md
 导出人工校核 Excel：
 
 ```powershell
-python ledger_review_export.py
+python flows/ledger_review_export.py
 ```
 
 默认输出：

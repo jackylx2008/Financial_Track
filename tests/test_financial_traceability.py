@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from localai.modules.bank_transaction_deduper import dedupe_transactions
-from localai.modules.financial_transaction_linker import link_orders_to_payments
-from localai.modules.order_deduper import dedupe_orders
+from flows.modules.bank_transaction_deduper import dedupe_transactions
+from flows.modules.financial_transaction_linker import link_orders_to_payments
+from flows.modules.order_deduper import dedupe_orders
 
 
 class FinancialTraceabilityTests(unittest.TestCase):

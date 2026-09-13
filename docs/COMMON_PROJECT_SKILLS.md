@@ -6,9 +6,9 @@
 
 使用方式约定：
 
-- Python 包路径使用 `<project_prefix>` 形式，例如 `src/<project_prefix>/flows/`
-- Python 入口脚本放在项目根目录下，不使用 `<project_prefix>` 包路径，例如 `example.py`
-- 包内导入路径使用 `<project_prefix>` 形式，例如 `from <project_prefix>.flows.example_flow import run`
+- 工作流包统一使用根目录 `flows/`，例如 `flows/workflows/`
+- 可独立执行的入口脚本放在 `flows/`，例如 `flows/example.py`
+- 包内导入路径使用 `flows` 前缀，例如 `from flows.workflows.example_flow import run`
 - 项目根目录基础设施直接按根模块导入，例如 `from logging_config import get_logger`
 
 这份文档中出现的前缀示例，都应理解为“项目名替换位”，而不是某个固定项目名。
@@ -31,14 +31,16 @@
 
 ## 项目结构
 
-项目采用 `src` 布局承载包代码，入口脚本放在项目根目录。推荐结构如下：
+项目采用根目录 `flows` 包承载入口与业务代码，根目录只保留 GUI 主入口和日志配置。推荐结构如下：
 
 - `logging_config.py`
 - `config.yaml`
 - `common.env.example`
-- `example.py`
-- `src/<project_prefix>/modules/`
-- `src/<project_prefix>/flows/`
+- `main.py`
+- `flows/example.py`
+- `flows/modules/`
+- `flows/workflows/`
+- `flows/gui/`
 - `docs/`
 - `tests/`
 - `logs/`
@@ -49,7 +51,7 @@
   - 必须存在于项目根目录
   - 提供统一日志初始化和 logger 获取能力
 - `config_loader.py`
-  - 位于 `src/<project_prefix>/`
+  - 位于 `flows/modules/`
   - 负责读取 `config.yaml`
   - 支持 `${ENV_VAR:-default}` 形式的环境变量覆盖
   - 支持从 `common.env` 注入本地环境变量
@@ -72,8 +74,8 @@
 - `logs/`
   - 统一存放运行日志
   - 日志目录固定使用复数形式 `logs/`，不得使用 `log/`
-- 项目根目录下的独立 `.py` 文件
-  - 放不同需求对应的独立启动脚本
+- `flows/` 下的独立 `.py` 文件
+  - 放不同需求对应的独立启动脚本，根目录只保留 `main.py` 和 `logging_config.py`
   - 一个入口脚本对应一个明确工作流
   - 不再采用 CLI 子命令统一分发的方式
 
@@ -110,7 +112,7 @@
 
 ## 入口脚本约定
 
-入口层采用“项目根目录下不同 Python 文件对应不同工作流”的方式组织，不使用 CLI 子命令统一分发。
+入口层采用“`flows/` 下不同 Python 文件对应不同工作流”的方式组织，不使用 CLI 子命令统一分发。
 
 当前入口位于：
 
@@ -121,13 +123,13 @@
 - 一个入口脚本对应一个明确工作流或一类明确需求。
 - 入口脚本名称应尽量直接反映用途。
 - 各入口之间可共享同一套基础模块、上下文对象和日志能力。
-- 公共逻辑应下沉到 `flows` 或 `modules`，不要在多个入口脚本里重复复制。
+- 公共逻辑应下沉到 `flows/workflows` 或 `flows/modules`，不要在多个入口脚本里重复复制。
 
 推荐示例：
 
-- `scan.py`：承接扫描类工作流
-- `report.py`：承接报告类工作流
-- `export.py`：承接导出类工作流
+- `flows/scan.py`：承接扫描类工作流
+- `flows/report.py`：承接报告类工作流
+- `flows/export.py`：承接导出类工作流
 
 约定：
 
@@ -139,12 +141,12 @@
   - 调用对应编排逻辑
   - 输出结果并处理退出状态
 - 不要把核心业务逻辑直接写进入口脚本。
-- 新增需求时，优先在项目根目录新增独立入口文件，而不是继续堆叠分支判断。
+- 新增需求时，优先在 `flows/` 新增独立入口文件，而不是继续堆叠分支判断。
 - 若多个入口共享相同启动动作，可抽出公共入口辅助模块，但不要重新退回到“大一统 CLI 分发”。
 
 ### 入口文件头 docstring
 
-项目根目录下的 Python 入口文件，必须在文件头部写模块级 docstring。
+`flows/` 下的 Python 入口文件，必须在文件头部写模块级 docstring。
 
 要求：
 
@@ -175,7 +177,7 @@
   --config-file   说明默认值和用途
 
 示例：
-  python example.py --name demo
+  python flows/example.py --name demo
 
 输出：
   说明输出文件位置、目标文件写入方式或控制台输出内容。
@@ -444,7 +446,7 @@ git push ssh://git@ssh.github.com/<owner>/<repo>.git main:refs/heads/main
 2. 先补配置项，再写业务逻辑。
 3. 先复用现有 logger 和 context，不要新开一套接线方式。
 4. 让编排层负责组织步骤，让基础模块负责提供能力。
-5. 不同需求优先使用项目根目录下的独立入口脚本承接。
+5. 不同需求优先使用 `flows/` 下的独立入口脚本承接。
 6. 运行产物写入 `output/`，日志写入 `logs/`。
 
 ## 适用场景
@@ -453,7 +455,7 @@ git push ssh://git@ssh.github.com/<owner>/<repo>.git main:refs/heads/main
 
 - 新增处理能力
 - 扩展新的编排逻辑
-- 增加项目根目录下新的独立入口脚本
+- 增加 `flows/` 下新的独立入口脚本
 - 增加配置项、日志项和输出方式
 - 保持项目结构可扩展、可复用
 - 控制示例内容的通用性与脱敏性

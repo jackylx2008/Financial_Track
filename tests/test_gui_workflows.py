@@ -7,8 +7,8 @@ import unittest
 from pathlib import Path
 from queue import Empty
 
-from localai.gui.task_runner import TaskEvent, TaskRunner
-from localai.gui.workflows import WORKFLOW_BY_KEY, build_command, validate_values
+from flows.gui.task_runner import TaskEvent, TaskRunner
+from flows.gui.workflows import WORKFLOW_BY_KEY, build_command, validate_values
 
 
 def default_values(workflow_key: str) -> dict[str, str | bool]:
@@ -24,6 +24,7 @@ class WorkflowCommandTests(unittest.TestCase):
             with self.subTest(workflow=key):
                 command = build_command(spec, default_values(key), project_root)
                 self.assertTrue(Path(command[1]).is_file(), command[1])
+                self.assertEqual(Path(command[1]).parent, project_root / "flows")
 
     def test_email_command_contains_selected_stage(self) -> None:
         values = default_values("email")

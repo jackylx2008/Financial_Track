@@ -32,23 +32,23 @@
 
 已完成：
 
-- 最终账本构建入口：`ledger_build.py`
-- 账本构建 flow：`src/localai/flows/ledger_build.py`
+- 最终账本构建入口：`flows/ledger_build.py`
+- 账本构建 flow：`flows/workflows/ledger_build.py`
 - 账本核心模块：
-  - `src/localai/modules/ledger_schema.py`
-  - `src/localai/modules/ledger_builder.py`
-  - `src/localai/modules/ledger_category_rules.py`
-  - `src/localai/modules/ledger_order_enricher.py`
-  - `src/localai/modules/ledger_quality_report.py`
-- 人工校核 Excel 导出入口：`ledger_review_export.py`
-- 人工校核 Excel flow：`src/localai/flows/ledger_review_export.py`
-- 人工校核 Excel 模块：`src/localai/modules/ledger_review_workbook.py`
+  - `flows/modules/ledger_schema.py`
+  - `flows/modules/ledger_builder.py`
+  - `flows/modules/ledger_category_rules.py`
+  - `flows/modules/ledger_order_enricher.py`
+  - `flows/modules/ledger_quality_report.py`
+- 人工校核 Excel 导出入口：`flows/ledger_review_export.py`
+- 人工校核 Excel flow：`flows/workflows/ledger_review_export.py`
+- 人工校核 Excel 模块：`flows/modules/ledger_review_workbook.py`
 - README 已补充 normalized、ledger 和人工校核流程说明。
 
 已验证：
 
-- `python ledger_build.py` 可以生成最终账本。
-- `python ledger_review_export.py` 可以生成按月份分 sheet、每个 sheet 内按日期排序的人工校核 Excel。
+- `python flows/ledger_build.py` 可以生成最终账本。
+- `python flows/ledger_review_export.py` 可以生成按月份分 sheet、每个 sheet 内按日期排序的人工校核 Excel。
 - 最终账本以银行/支付流水为主来源，订单只用于补充明细，避免重复统计。
 - 强关联订单的商户/标题/摘要会参与分类，例如美团付款关联到药房订单后可归入医疗健康。
 
@@ -57,9 +57,9 @@
 1. 人工校核回读闭环：
    - 读取人工修改后的 `processed_data/review/ledger_review.xlsx`。
    - 生成 `processed_data/ledger/manual_overrides.json`。
-   - 下一次 `ledger_build.py` 构建时优先应用人工修正。
+   - 下一次 `flows/ledger_build.py` 构建时优先应用人工修正。
 2. 统计报表：
-   - 新增 `ledger_report_export.py`。
+   - 新增 `flows/ledger_report_export.py`。
    - 输出 `processed_data/reports/ledger_report.xlsx`。
    - 基于人工修正后的账本生成总览、按月、按日、分类、人员、项目等统计。
 3. 规则继续完善：
@@ -116,33 +116,33 @@ processed_data/reports/ledger_report.xlsx
 新增入口：
 
 ```text
-ledger_build.py
-ledger_review_export.py
+flows/ledger_build.py
+flows/ledger_review_export.py
 ledger_review_import.py
-ledger_report_export.py
+flows/ledger_report_export.py
 ```
 
 新增 flow：
 
 ```text
-src/localai/flows/ledger_build.py
-src/localai/flows/ledger_review_export.py
-src/localai/flows/ledger_review_import.py
-src/localai/flows/ledger_report_export.py
+flows/workflows/ledger_build.py
+flows/workflows/ledger_review_export.py
+flows/workflows/ledger_review_import.py
+flows/workflows/ledger_report_export.py
 ```
 
 新增 modules：
 
 ```text
-src/localai/modules/ledger_schema.py
-src/localai/modules/ledger_builder.py
-src/localai/modules/ledger_category_rules.py
-src/localai/modules/ledger_person_rules.py
-src/localai/modules/ledger_order_enricher.py
-src/localai/modules/ledger_quality_report.py
-src/localai/modules/ledger_review_workbook.py
-src/localai/modules/ledger_review_importer.py
-src/localai/modules/ledger_report_workbook.py
+flows/modules/ledger_schema.py
+flows/modules/ledger_builder.py
+flows/modules/ledger_category_rules.py
+flows/modules/ledger_person_rules.py
+flows/modules/ledger_order_enricher.py
+flows/modules/ledger_quality_report.py
+flows/modules/ledger_review_workbook.py
+flows/modules/ledger_review_importer.py
+flows/modules/ledger_report_workbook.py
 ```
 
 职责：
@@ -215,7 +215,7 @@ processed_data/ledger/ledger_quality_report.md
 新增：
 
 ```text
-python ledger_report_export.py
+python flows/ledger_report_export.py
 ```
 
 输出：
@@ -252,7 +252,7 @@ Excel sheet 建议：
 
 已完成：
 
-- `python ledger_review_export.py`
+- `python flows/ledger_review_export.py`
 - 输出：`processed_data/review/ledger_review.xlsx`
 - Excel 按月份分 sheet，每个 sheet 内按日期升序排列。
 - 缺日期记录单独进入 `缺日期` sheet。
@@ -290,10 +290,10 @@ ledger_review_import.py
   - 人工修正字段
   - 人工备注
   - 导入时间
-- `ledger_build.py` 下次构建时增加参数：
+- `flows/ledger_build.py` 下次构建时增加参数：
 
 ```powershell
-python ledger_build.py --manual-overrides processed_data/ledger/manual_overrides.json
+python flows/ledger_build.py --manual-overrides processed_data/ledger/manual_overrides.json
 ```
 
 - 默认也可以自动读取：
@@ -314,9 +314,9 @@ override_source: manual_overrides
 1. 实现 `ledger_review_import.py`
    - 先完成人工校核闭环。
    - 让人工修正能回流到 `manual_overrides.json`。
-2. 修改 `ledger_build.py`
+2. 修改 `flows/ledger_build.py`
    - 支持读取并应用 `manual_overrides.json`。
-3. 再实现 `ledger_report_export.py`
+3. 再实现 `flows/ledger_report_export.py`
    - 统计报表应基于已经应用人工修正后的账本。
 4. 根据人工校核结果补充分类规则
    - 优先补高频未分类商户、高金额收入、疑似转账/还款误判。
@@ -328,7 +328,7 @@ override_source: manual_overrides
 - 可以运行：
 
 ```powershell
-python ledger_build.py
+python flows/ledger_build.py
 ```
 
 - 能生成 `processed_data/ledger/ledger_entries.jsonl`。
@@ -343,7 +343,7 @@ python ledger_build.py
 - 可以运行：
 
 ```powershell
-python ledger_report_export.py
+python flows/ledger_report_export.py
 ```
 
 - 能生成 `processed_data/reports/ledger_report.xlsx`。

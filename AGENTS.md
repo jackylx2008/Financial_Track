@@ -5,8 +5,9 @@
 
 ## 项目结构
 
-- 根目录 `.py` 文件是一对一工作流入口，只负责参数解析、配置、日志、上下文、编排调用和退出状态。
-- `src/localai/flows/` 负责场景编排，`src/localai/modules/` 负责单一职责的可复用能力。
+- 根目录只保留 `main.py` GUI 入口和 `logging_config.py` 日志配置。
+- `flows/*.py` 是可独立执行的工作流入口，只负责参数解析、配置、日志、上下文、编排调用和退出状态。
+- `flows/workflows/` 负责场景编排，`flows/modules/` 负责单一职责的可复用能力。
 - 配置统一从根目录 `config.yaml` 加载，本机差异和凭据仅放在被忽略的 `common.env` 或专用 env 文件。
 - 日志统一通过根目录 `logging_config.py` 初始化并写入 `logs/`。
 - 测试统一放在 `tests/`，不得读取或修改真实个人财务数据。
@@ -32,7 +33,7 @@
 修改前检查工作区和调用链。行为变化时同步更新 README、示例配置和测试。完成前至少运行：
 
 ```powershell
-$env:PYTHONPATH='src'
+$env:PYTHONPATH='.'
 python -m unittest discover -s tests -v
 python -m compileall -q -f -x 'vendor|raw_data|processed_data|logs?|__pycache__' .
 python -m flake8 .

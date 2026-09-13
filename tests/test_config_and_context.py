@@ -7,9 +7,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from localai.context import AppContext
-from localai.entrypoints import bootstrap_context
-from localai.modules.config_loader import get_cloudstation_root, load_common_env, load_config
+from flows.context import AppContext
+from flows.entrypoints import bootstrap_context
+from flows.modules.config_loader import get_cloudstation_root, load_common_env, load_config
 
 
 class ConfigLoaderTests(unittest.TestCase):
@@ -68,17 +68,23 @@ class AppContextTests(unittest.TestCase):
     def test_bootstrap_uses_root_logs_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            entry = root / "demo.py"
+            entry = root / "flows" / "demo.py"
+            entry.parent.mkdir()
             entry.write_text("", encoding="utf-8")
             (root / "config.yaml").write_text("app:\n  log_level: INFO\n", encoding="utf-8")
 
             context = bootstrap_context(str(entry))
 
-            self.assertEqual(context.project_root, root)
+            self.assertEqual(context.project_root, root.resolve())
             self.assertTrue((root / "logs" / "demo.log").exists())
             for handler in logging.getLogger().handlers[:]:
                 handler.close()
                 logging.getLogger().removeHandler(handler)
+
+    def test_project_root_only_contains_gui_and_logging_python_files(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        python_files = {path.name for path in project_root.glob("*.py")}
+        self.assertEqual(python_files, {"main.py", "logging_config.py"})
 
 
 if __name__ == "__main__":

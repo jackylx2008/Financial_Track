@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_LOG_DIR = PROJECT_ROOT / "logs"
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(name)s - %(message)s"
 MAX_LOG_BYTES = 10 * 1024 * 1024
 LOG_BACKUP_COUNT = 5
@@ -21,13 +22,13 @@ LOG_BACKUP_COUNT = 5
 def setup_logger(
     log_level: int | str = logging.INFO,
     log_file: str | Path | None = None,
+    *,
+    entry_name: str | None = None,
+    log_dir: str | Path | None = None,
 ) -> logging.Logger:
     """配置根 logger，同时输出到控制台和 UTF-8 滚动日志文件。"""
     level = _coerce_log_level(log_level)
-    entry_name = Path(sys.argv[0]).stem or "app"
-    target = Path(log_file).expanduser() if log_file else PROJECT_ROOT / "logs" / f"{entry_name}.log"
-    if not target.is_absolute():
-        target = PROJECT_ROOT / target
+    target = _resolve_log_path(log_file, entry_name=entry_name, log_dir=log_dir)
     target.parent.mkdir(parents=True, exist_ok=True)
 
     root_logger = logging.getLogger()
@@ -50,6 +51,26 @@ def setup_logger(
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
     return root_logger
+
+
+def _resolve_log_path(
+    log_file: str | Path | None,
+    *,
+    entry_name: str | None,
+    log_dir: str | Path | None,
+) -> Path:
+    if log_file is not None and log_dir is not None:
+        raise ValueError("log_file 和 log_dir 不能同时指定")
+
+    if log_file is not None:
+        target = Path(log_file).expanduser()
+        return target if target.is_absolute() else PROJECT_ROOT / target
+
+    directory = Path(log_dir).expanduser() if log_dir is not None else DEFAULT_LOG_DIR
+    if not directory.is_absolute():
+        directory = PROJECT_ROOT / directory
+    name = entry_name or Path(sys.argv[0]).stem or "app"
+    return directory / f"{name}.log"
 
 
 def get_logger(name: str | None = None) -> logging.Logger:

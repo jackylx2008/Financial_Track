@@ -8,10 +8,10 @@
 
 - 京东：订单页面导出为 PDF。
 - 淘宝：订单页面导出为 PDF。
-- 拼多多：安卓订单页面截图，并通过本地 AI 识别整理为 JSON。
-- 美团：安卓订单页面截图，并通过本地 AI 识别整理为 JSON。
+- 拼多多：安卓订单页面截图，并通过外部 AI 服务识别整理为 JSON。
+- 美团：安卓订单页面截图，并通过外部 AI 服务识别整理为 JSON。
 
-截至当前阶段，四个平台的原始数据获取链路已经完成。京东、淘宝以 PDF 作为原始数据归档形式；拼多多、美团以截图作为视觉输入，并已通过本地 AI 生成结构化 JSON。
+截至当前阶段，四个平台的原始数据获取链路已经完成。京东、淘宝以 PDF 作为原始数据归档形式；拼多多、美团以截图作为视觉输入，并已通过外部 AI 服务生成结构化 JSON。
 
 ## 总体技术路线
 
@@ -21,24 +21,25 @@
 
 拼多多和美团的订单数据主要来自安卓 App 页面。项目通过 ADB 获取手机或模拟器截图，连续滚动订单列表，并在本地使用支持视觉输入的 llama.cpp OpenAI 兼容服务，将截图中的可见订单卡片整理为 JSON。
 
-所有真实采集数据、日志、浏览器登录状态、本地模型路径和环境变量都保存在本机，不提交到版本库。
+所有真实采集数据、日志、浏览器登录状态和环境变量都保存在本机，不提交到版本库。
 
 ## 阶段一：项目基础结构
 
 项目先搭建了基本工程结构：
 
-- 根目录入口脚本承接独立工作流，例如 `jd_pdf_bot.py`、`taobao_pdf_bot.py`、`pdd_order_bot.py`、`meituan_order_bot.py`、`order_image_ai.py`。
-- `order_capture/` 封装 ADB 截图能力。
-- `src/localai/modules/` 放置本地 AI、配置、JSON 解析等可复用模块。
-- `src/localai/flows/` 放置围绕具体任务的流程编排。
+- 根目录仅保留 `main.py` 图形入口和 `logging_config.py` 日志配置。
+- `flows/*.py` 承接独立工作流，例如 `flows/jd_pdf_bot.py`、`flows/financial_email_bot.py`。
+- `flows/order_capture/` 封装 ADB 截图能力。
+- `flows/modules/` 放置财务领域、配置、JSON 解析和外部服务客户端等可复用模块。
+- `flows/workflows/` 放置围绕具体任务的流程编排。
 - `config.yaml` 和 `common.env` 分离通用配置与本机私有配置。
 - `raw_data/` 和 `logs/` 作为本地运行产物目录，并通过 `.gitignore` 排除。
 
-这个结构保证了后续新增平台或新增处理流程时，可以优先复用已有的配置、日志、本地 AI 客户端和文件输出逻辑。
+这个结构保证了后续新增平台或新增处理流程时，可以优先复用已有的配置、日志、外部 AI 客户端和文件输出逻辑。
 
 ## 阶段二：京东 PDF 获取
 
-京东链路由 `jd_pdf_bot.py` 实现。
+京东链路由 `flows/jd_pdf_bot.py` 实现。
 
 实现方式：
 
@@ -53,7 +54,7 @@
 
 ## 阶段三：淘宝 PDF 获取
 
-淘宝链路由 `taobao_pdf_bot.py` 实现。
+淘宝链路由 `flows/taobao_pdf_bot.py` 实现。
 
 实现方式：
 
@@ -69,7 +70,8 @@
 
 ## 阶段四：拼多多和美团截图获取
 
-拼多多、美团链路由 `pdd_order_bot.py`、`meituan_order_bot.py`、`android_order_workflow/android_order_bot.py` 和 `order_capture/capture_screen.py` 实现。
+拼多多、美团链路由 `flows/pdd_order_bot.py`、`flows/meituan_order_bot.py`、
+`flows/android_order/android_order_bot.py` 和 `flows/order_capture/capture_screen.py` 实现。
 
 实现方式：
 
@@ -90,16 +92,16 @@
 
 这一阶段完成了移动端订单页面的批量视觉原始数据采集。
 
-## 阶段五：本地 AI 识别与 JSON 整理
+## 阶段五：外部 AI 识别与 JSON 整理
 
-拼多多和美团截图识别链路由 `order_image_ai.py` 和 `src/localai/flows/order_image_extract.py` 实现。
+拼多多和美团截图识别链路由 `flows/order_image_ai.py` 和 `flows/workflows/order_image_extract.py` 实现。
 
 实现方式：
 
 - 入口脚本根据平台解析默认截图目录。
 - 支持识别最新一张截图，也支持 `--all` 批量识别目录内所有 PNG。
-- 本地 AI 客户端读取 `config.yaml` 中的 `llamacpp` 配置。
-- 如果开启自动启动，会在需要时启动本机 `llama-server`。
+- AI 客户端读取 `config.yaml` 中的 `llamacpp` 连接配置。
+- AI 服务由其他运行时项目负责启动和管理，本项目只检查并调用现有服务。
 - 调用 OpenAI 兼容的 `/chat/completions` 接口，并以 data URL 方式传入图片。
 - 提示词要求模型只输出 JSON，不输出 Markdown 或解释。
 - JSON 解析模块会兼容模型输出中可能出现的代码块或额外文本。
@@ -128,19 +130,19 @@
 - 淘宝订单页面半自动导出 PDF。
 - 拼多多安卓订单页面单张、固定页数、滚动到底截图。
 - 美团安卓订单页面单张、固定页数、滚动到底截图。
-- 拼多多截图通过本地 AI 整理为 JSON。
-- 美团截图通过本地 AI 整理为 JSON。
-- 本地 llama.cpp 服务健康检查、自动启动、模型可用性检查和进程清理。
+- 拼多多截图通过外部 AI 服务整理为 JSON。
+- 美团截图通过外部 AI 服务整理为 JSON。
+- 外部 AI 服务健康检查和模型可用性检查。
 - 运行日志、本地配置和真实数据的版本库隔离。
 
 当前原始数据形态：
 
 | 平台 | 采集入口 | 原始产物 | 结构化产物 |
 | --- | --- | --- | --- |
-| 京东 | `jd_pdf_bot.py` | PDF | 待后续解析 |
-| 淘宝 | `taobao_pdf_bot.py` | PDF | 待后续解析 |
-| 拼多多 | `pdd_order_bot.py` | PNG 截图 | JSON |
-| 美团 | `meituan_order_bot.py` | PNG 截图 | JSON |
+| 京东 | `flows/jd_pdf_bot.py` | PDF | 待后续解析 |
+| 淘宝 | `flows/taobao_pdf_bot.py` | PDF | 待后续解析 |
+| 拼多多 | `flows/pdd_order_bot.py` | PNG 截图 | JSON |
+| 美团 | `flows/meituan_order_bot.py` | PNG 截图 | JSON |
 
 ## 已形成的关键经验
 
@@ -148,7 +150,7 @@
 2. 移动端 App 优先用截图作为最小侵入采集方式。ADB 截图不需要修改 App，也不需要接入平台内部接口。
 3. 连续截图必须保留一定重叠。订单卡片高度不固定，滑动距离过大容易漏掉金额、状态或订单标题。
 4. 到底判断不能只依赖固定页数。通过截图相似度判断可以减少无效截图，同时保留手工继续的入口。
-5. 本地 AI 输出必须有强约束。提示词、JSON 提取、warnings 字段和 raw output fallback 是保证批量处理可追踪的关键。
+5. AI 输出必须有强约束。提示词、JSON 提取、warnings 字段和 raw output fallback 是保证批量处理可追踪的关键。
 6. 真实路径和隐私数据必须和代码隔离。`common.env`、`raw_data/`、`logs/` 和浏览器 profile 都不应进入版本库。
 
 ## 当前限制
@@ -159,7 +161,7 @@
 - 拼多多和美团截图识别依赖视觉模型能力，金额、订单号、截断订单仍需要抽样复核。
 - 连续截图会产生重叠订单，后续需要订单级去重和跨截图合并。
 - 不同平台字段命名和可见信息不完全一致，后续需要统一订单 schema。
-- 本地 AI 运行依赖模型、mmproj、CUDA DLL 和 llama.cpp 版本，本机环境需要持续保持可复现说明。
+- AI 识别依赖外部服务可用性和所选视觉模型能力，服务生命周期由专用运行时项目维护。
 
 ## 下一阶段建议
 
@@ -174,4 +176,4 @@
 
 ## 阶段结论
 
-本阶段已经完成多平台原始订单数据获取的核心闭环。京东和淘宝完成 PDF 归档；拼多多和美团完成截图采集，并已经通过本地 AI 转换为 JSON。项目现在具备继续推进“订单级清洗、去重、统一 schema、分类统计和报表输出”的基础。
+本阶段已经完成多平台原始订单数据获取的核心闭环。京东和淘宝完成 PDF 归档；拼多多和美团完成截图采集，并已经通过外部 AI 服务转换为 JSON。项目现在具备继续推进“订单级清洗、去重、统一 schema、分类统计和报表输出”的基础。

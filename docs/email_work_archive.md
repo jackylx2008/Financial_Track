@@ -14,18 +14,17 @@
 
 ## 入口和目录
 
-根目录邮件流水入口：
+邮件流水入口：
 
 ```powershell
-python financial_email_bot.py
-python financial_attachment_crack.py --check-tools
+python flows/financial_email_bot.py
+python flows/financial_attachment_crack.py --check-tools
 ```
 
 邮件流水工作代码目录：
 
 ```text
-financial_email_workflow/
-  gpu_zip_pdf_cracker.py  # 旧路径兼容入口
+flows/financial_email/
   financial_attachment_prepare.py
   financial_attachment_extract.py
   consolidate_bank_transactions.py
@@ -34,13 +33,13 @@ financial_email_workflow/
 核心业务模块：
 
 ```text
-src/localai/flows/
+flows/workflows/
   financial_email_ingest.py
   financial_attachment_prepare.py
   financial_attachment_extract.py
   bank_transaction_consolidate.py
 
-src/localai/modules/
+flows/modules/
   financial_email_config.py
   financial_email_imap.py
   financial_email_parser.py
@@ -71,17 +70,17 @@ FINANCIAL_ATTACHMENT_*
 完整链路：
 
 ```powershell
-python financial_email_bot.py --stage ingest
-python financial_email_bot.py --stage prepare
-python financial_email_bot.py --stage crack
-python financial_email_bot.py --stage extract
-python financial_email_bot.py --stage normalize
+python flows/financial_email_bot.py --stage ingest
+python flows/financial_email_bot.py --stage prepare
+python flows/financial_email_bot.py --stage crack
+python flows/financial_email_bot.py --stage extract
+python flows/financial_email_bot.py --stage normalize
 ```
 
 也可以直接运行：
 
 ```powershell
-python financial_email_bot.py --stage all
+python flows/financial_email_bot.py --stage all
 ```
 
 常用数据路径：
@@ -121,7 +120,7 @@ FINANCIAL_ATTACHMENT_PDF_PWD=[]
 FINANCIAL_ATTACHMENT_ZIP_PWD=[]
 ```
 
-已破解成功的 ZIP/PDF 密码会合并保存到 `financial_attachment_passwords.env`。后续运行 `python financial_email_bot.py --stage crack` 会先尝试已保存密码，已经能用保存密码解开的附件不会重复破解。
+已破解成功的 ZIP/PDF 密码会合并保存到 `financial_attachment_passwords.env`。后续运行 `python flows/financial_email_bot.py --stage crack` 会先尝试已保存密码，已经能用保存密码解开的附件不会重复破解。
 
 hashcat / john 工具路径放在 `config.yaml` 的 `financial_attachment_cracker` 下。
 
@@ -202,19 +201,19 @@ normalize:
 邮件流水链路：
 
 ```powershell
-python -m py_compile financial_email_bot.py financial_attachment_crack.py financial_email_workflow\financial_attachment_prepare.py financial_email_workflow\financial_attachment_extract.py financial_email_workflow\consolidate_bank_transactions.py
-python financial_email_bot.py --stage prepare
-python financial_email_bot.py --stage crack
-python financial_email_bot.py --stage extract
-python financial_email_bot.py --stage normalize
+python -m py_compile flows/financial_email_bot.py flows/financial_attachment_crack.py flows/financial_email/financial_attachment_prepare.py flows/financial_email/financial_attachment_extract.py flows/financial_email/consolidate_bank_transactions.py
+python flows/financial_email_bot.py --stage prepare
+python flows/financial_email_bot.py --stage crack
+python flows/financial_email_bot.py --stage extract
+python flows/financial_email_bot.py --stage normalize
 ```
 
 安卓截图入口：
 
 ```powershell
-python -m py_compile pdd_order_bot.py meituan_order_bot.py android_order_workflow\android_order_bot.py
-python pdd_order_bot.py --help
-python meituan_order_bot.py --help
+python -m py_compile flows/pdd_order_bot.py flows/meituan_order_bot.py flows/android_order/android_order_bot.py
+python flows/pdd_order_bot.py --help
+python flows/meituan_order_bot.py --help
 ```
 
 ## 后续参考
