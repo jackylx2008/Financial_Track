@@ -4,6 +4,7 @@
 raw_data/ 
 data/
 processed_data/
+tests/manual_android_capture/
 output/
 input/
 vendor/
