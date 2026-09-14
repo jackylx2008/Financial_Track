@@ -10,6 +10,7 @@ from flows.modules.android_adb import AdbClient, AndroidDevice, ScreenSize, is_u
 from flows.modules.android_capture_config import load_android_app_configs, resolve_android_app
 from flows.modules.android_connection import current_platform_key
 from flows.modules.android_windows import resolve_windows_adb
+from tests.manual_cebbank_capture import clear_test_screenshots
 
 
 class AndroidCaptureConfigTests(unittest.TestCase):
@@ -30,6 +31,20 @@ class AndroidCaptureConfigTests(unittest.TestCase):
 
     def test_missing_registry_has_no_hardcoded_apps(self) -> None:
         self.assertEqual(load_android_app_configs({}), ())
+
+
+class ManualCaptureTests(unittest.TestCase):
+    def test_manual_capture_cleanup_only_removes_png_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            output_dir = Path(directory)
+            (output_dir / "old_001.png").write_bytes(b"png")
+            (output_dir / "notes.txt").write_text("keep", encoding="utf-8")
+
+            deleted = clear_test_screenshots(output_dir)
+
+            self.assertEqual(deleted, 1)
+            self.assertFalse((output_dir / "old_001.png").exists())
+            self.assertTrue((output_dir / "notes.txt").exists())
 
 
 class AndroidAdbTests(unittest.TestCase):

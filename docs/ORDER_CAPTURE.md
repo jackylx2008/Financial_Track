@@ -68,3 +68,13 @@ logs/android_capture_windows.log
 ```
 
 日志包含操作系统、ADB 路径、脱敏设备序列号、屏幕尺寸、App key、输出目录、截图结果、滑动参数和错误。日志不写入截图内容、完整设备序列号或交易流水内容。
+
+## 光大银行三页人工测试
+
+手机停在需要截取的光大银行流水页面后运行：
+
+```bash
+python tests/manual_cebbank_capture.py
+```
+
+该入口每次启动都会先清空 `tests/manual_android_capture/cebbank/` 中已有的 PNG，再截取并保存 3 页，方便人工校核。目录已被 Git 忽略，真实流水截图不会提交到仓库。
