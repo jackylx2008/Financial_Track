@@ -2,10 +2,10 @@
 
 个人消费与银行流水采集整理辅助工具。当前项目包含几类能力：
 
-- 京东、淘宝订单页面导出为 PDF。
-- 通过安卓手机 ADB 截取拼多多、美团订单页面截图，作为后续 OCR 和 AI 结构化识别的输入。
+- 京东、淘宝等网站页面可导出为 PDF，作为安卓截图数据的校验和归档材料。
+- 通过安卓 USB 实体手机 ADB 截取多个 App 的交易流水页面，作为后续 OCR 和 AI 结构化识别的输入。
 - 调用外部项目提供的 OpenAI 兼容 AI 服务，对订单截图做结构化识别。
-- 采集流水邮件、准备附件密码、解密/解压账单附件，并整理为统一银行流水中间层。
+- 采集流水邮件、准备附件密码并解密/解压账单附件，用于校验安卓 App 截图获得的流水。
 - 汇总银行流水与订单结构化结果，构建 normalized 中间层、最终 ledger 账本和人工校核 Excel。
 
 本项目面向个人账号自用，不包含平台逆向接口、抓包或绕过风控逻辑。
@@ -21,8 +21,6 @@ Financial_Track/
     workflows/               # 场景编排层
     modules/                 # 财务领域与通用基础模块
     gui/                     # 图形界面实现
-    android_order/           # 安卓订单截图采集实现
-    order_capture/           # ADB 截图基础模块
     financial_email/         # 邮件与附件分阶段入口
   tests/                     # 单元测试与工作流级测试
   docs/                      # 架构、配置、进度和历史文档
@@ -36,12 +34,20 @@ Financial_Track/
 项目采用“根目录单一 GUI 入口 + `flows/` 工作流入口 + `flows/workflows/` 编排层 +
 `flows/modules/` 基础模块”的结构。除 `main.py` 和 `logging_config.py` 外，根目录不再放置 Python 文件。
 
-## 当前主线流程
+## 数据来源策略与当前主线
+
+流水获取统一以安卓 App 截图为主来源；通过邮件或网站取得的 PDF、邮件正文和附件只作为校验、对账和原始凭证，不再作为新增流水的权威来源。目标链路为：
+
+```text
+安卓 App 交易流水截图 → 图像结构化识别 → normalized → ledger
+邮件/网站 PDF ───────────────→ 校验、对账与差异报告
+```
+
+安卓截图采集已经统一；银行 App 截图结构化识别和 PDF 差异核验仍是后续工作。现有邮件/PDF 归一化代码暂时保留，用于历史数据兼容和对账开发。
 
 推荐按下面顺序处理完整数据链路：
 
 ```powershell
-python flows/financial_email_bot.py --stage all --skip-crack
 python flows/order_image_ai.py pdd --all --max-tokens 1024
 python flows/order_image_ai.py meituan --all --max-tokens 1024
 python flows/normalize_transactions.py
@@ -52,7 +58,7 @@ python flows/ledger_review_export.py
 主要数据分层：
 
 ```text
-raw_data/financial_email/                  # 邮件、正文、附件和附件提取结果
+raw_data/financial_email/                  # 邮件、PDF、附件等校验对账材料
 raw_data/order_json/pdd|meituan/           # 截图 AI 识别后的订单 JSON
 processed_data/normalized/                 # bank/orders/financial_transactions/link 中间层
 processed_data/ledger/                     # 最终账本 ledger_entries 和质量报告
@@ -113,6 +119,8 @@ CLOUDSTATION_ROOT_LINUX=~/CloudStation
 logs/ai_self_check.log
 logs/order_image_ai.log
 logs/financial_email_bot.log
+logs/android_capture_macos.log
+logs/android_capture_windows.log
 ```
 
 `common.env`、`financial_attachment_passwords.env`、`raw_data/`、`processed_data/`、`logs/`、`vendor/` 等本地文件或运行产物不应提交到 git。
@@ -131,80 +139,26 @@ git diff --check
 
 跨平台协作规范见 [`AGENTS.md`](AGENTS.md)，详细项目文档集中存放在 [`docs/`](docs/)。
 
-安卓订单截图需要 ADB。可以使用 Android Platform Tools，也可以使用 MuMu 自带的 ADB：
+## 安卓 App 交易流水截图
 
-```text
-<adb_path>
+安卓采集只支持 macOS/Windows 连接的 USB 实体手机，不使用模拟器。先确认手机已启用 USB 调试并授权：
+
+```bash
+adb devices -l
 ```
 
-确认安卓手机已打开 USB 调试，并能被 ADB 识别：
+App 名称、输出目录和参考滑动参数通过本机 `common.env` 的 `ANDROID_CAPTURE_APPS_JSON` 维护，不放入 `config.yaml`，增加 App 不需要增加入口脚本。本机当前配置了拼多多、美团和光大银行；启动 `python main.py` 后，在统一“安卓 App 采集”页签选择 App 和采集模式即可。
 
-```powershell
-adb devices
+GUI 是正式入口，底层统一调试入口为：
+
+```bash
+python flows/android_transaction_capture.py check --app sample_wallet
+python flows/android_transaction_capture.py capture-scroll --app sample_wallet --pages 5 --wait 1.5
 ```
 
-或使用 MuMu 自带 ADB：
+程序自动读取实际屏幕尺寸，并把 App 的参考滑动坐标换算到当前设备。连接、脱敏设备信息、屏幕尺寸、截图和滑动结果写入根目录 `logs/android_capture_macos.log` 或 `logs/android_capture_windows.log`。完整说明见 [`docs/ORDER_CAPTURE.md`](docs/ORDER_CAPTURE.md)。
 
-```powershell
-& "<adb_path>" devices
-```
-
-正常输出类似：
-
-```text
-<device_serial> device
-```
-
-## 安卓订单截图
-
-平台入口支持拼多多和美团：
-
-```powershell
-python flows/pdd_order_bot.py capture --device <device_serial>
-python flows/meituan_order_bot.py capture --device <device_serial>
-```
-
-完整采集参数见 [`docs/ORDER_CAPTURE.md`](docs/ORDER_CAPTURE.md)。
-
-默认输出：
-
-```text
-raw_data/pdd/pinduoduo_*.png
-raw_data/meituan/meituan_*.png
-```
-
-每次启动截图命令时，会先清理对应目录下已有的同平台截图。需要保留已有截图时，加：
-
-```powershell
---keep-existing
-```
-
-### 固定页数连续截图
-
-```powershell
-python flows/pdd_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
-python flows/meituan_order_bot.py capture-scroll --device <device_serial> --pages 5 --wait 1.5
-```
-
-### 自动截图到列表底部
-
-```powershell
-python flows/pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 80 --wait 1.5
-python flows/meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --wait 1.5
-```
-
-脚本通过比较相邻截图主体区域判断是否已经到底。美团如果提示“显示更多历史订单”，脚本会暂停；手工点击手机上的按钮后，在终端输入 `c` 继续。直接回车则停止。
-
-拼多多默认使用更短的滑动距离 `--start-y 1700 --end-y 850`，让相邻截图保留更多重叠，避免订单金额刚好被滑过。美团默认仍是 `--start-y 1700 --end-y 500`。
-
-滑动距离不合适时，可以调参数：
-
-```powershell
-python flows/pdd_order_bot.py capture-until-end --device <device_serial> --max-pages 120 --wait 1.5 --start-y 1700 --end-y 950
-python flows/meituan_order_bot.py capture-until-end --device <device_serial> --max-pages 150 --start-y 1800 --end-y 450
-```
-
-## 京东订单 PDF
+## 京东订单 PDF 校验归档
 
 京东脚本使用 Playwright 持久化浏览器配置导出订单页 PDF。
 
@@ -240,7 +194,7 @@ python flows/jd_pdf_bot.py
 python flows/jd_pdf_bot.py --url "https://order.jd.com/center/list.action?d=2024&s=4096&page=1"
 ```
 
-## 淘宝订单 PDF
+## 淘宝订单 PDF 校验归档
 
 淘宝脚本通过 `pyautogui` 辅助浏览器打印页面。使用前请确认浏览器默认打印目标为“另存为 PDF”，并打开淘宝订单页面。
 
@@ -255,14 +209,9 @@ python flows/taobao_pdf_bot.py
 ## 外部 AI 服务自检
 
 本项目只调用其他项目已启动的 OpenAI 兼容 AI 服务，不负责安装模型、启动服务、管理 CUDA
-运行时或结束服务进程。连接配置写入本地 `common.env`，不要提交到 Git：
+运行时或结束服务进程。连接默认值保留在 `config.yaml`；需要覆盖时，由启动本项目的外部运行环境注入
+`LLAMACPP_*` 进程变量，不再重复写入本项目的 `common.env`。
 详细接口约定见 [`docs/EXTERNAL_AI_SERVICE.md`](docs/EXTERNAL_AI_SERVICE.md)。
-
-```env
-LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
-LLAMACPP_MODEL=local-model
-LLAMACPP_API_KEY=
-```
 
 外部服务需提供 `/health`、`/v1/models` 和 `/v1/chat/completions` 接口。
 
@@ -321,7 +270,7 @@ logs/order_image_ai.log
 
 安卓截图已经可以通过外部 AI 服务识别并整理为订单 JSON；最终账本仍以银行/支付流水为主来源，订单只作为购物、外卖、平台服务等场景的明细补充，避免重复统计。
 
-## 邮件流水采集
+## 邮件/PDF 校验对账材料采集
 
 银行交易提醒、信用卡账单、支付平台账单等邮件可以作为另一类底层原始数据。项目提供
 `flows/financial_email_bot.py`，通过 IMAP 读取邮箱，把匹配到的流水邮件保存为本地原始产物：
@@ -362,7 +311,7 @@ python flows/financial_email_bot.py --since 2024-01-01 --max-messages 500
 python flows/financial_email_bot.py --eml-dir raw_data/email_export
 ```
 
-当前邮件解析会先按 `config.yaml` 中的 `financial_email.rules` 匹配流水邮件；如果没有命中来源规则，则使用 `FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON` 中的标题关键字兜底捕捉账单/流水邮件。解析器会递归保存邮件中的 PDF 等附件，再用通用金额、时间、卡尾号正则抽取 `candidate_transactions`。这一步是“原始数据层”，不是最终账本；后续应按具体邮件模板增加专用 parser，并把候选交易合并进统一流水 schema。
+当前邮件解析会按 `config.yaml` 中的规则匹配账单邮件并保存 PDF 等附件，也会保留历史候选交易提取能力。这些产物定位为校验对账材料，不再作为新增流水的权威来源。
 
 ### 邮件附件密码准备
 
@@ -414,9 +363,9 @@ raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 
 日志会记录每个附件的解密/解压结果、密码来源和候选数量，不记录真实密码。
 
-### 银行流水统一整理
+### 历史邮件/PDF 流水整理（对账兼容）
 
-已下载的邮件正文候选交易和已成功解密/解压的 PDF、ZIP 内部文件可以整理为统一银行流水中间层：
+已下载的邮件正文和已成功解密/解压的 PDF、ZIP 内部文件仍可整理为历史兼容中间层，后续用于和安卓截图流水生成差异报告：
 
 ```powershell
 python flows/financial_email_bot.py --stage normalize
@@ -437,7 +386,7 @@ processed_data/normalized/bank_transactions.json
 processed_data/normalized/bank_transactions_quality_report.md
 ```
 
-整理过程会按统一 schema 标准化金额、方向、账户尾号、来源引用等字段，并在 normalized 层做去重合并。每条去重后的记录会保留 `source_records`，用于回查原始邮件、附件、PDF 或 Excel 行。邮件正文候选通常缺交易时间和账户信息，当前按低置信度来源进入质量报告；已成功解密的 PDF/XLS 附件是第一阶段更可靠的流水来源。
+整理过程会保留金额、方向、账户尾号和来源引用，方便回查邮件、附件、PDF 或 Excel 行。迁移完成后，这些记录应标记为 `reconciliation` 来源，只参与校验，不直接生成权威账本流水。
 
 ## 归一化、账本与人工校核
 

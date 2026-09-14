@@ -6,7 +6,7 @@ import os
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Callable, Literal, Mapping
 
@@ -70,9 +70,27 @@ def validate_values(spec: WorkflowSpec, values: Values) -> None:
 
 def format_command(command: list[str]) -> str:
     """生成适合当前平台预览的命令行文本。"""
+    display_command = _redact_command(command)
     if os.name == "nt":
-        return subprocess.list2cmdline(command)
-    return shlex.join(command)
+        return subprocess.list2cmdline(display_command)
+    return shlex.join(display_command)
+
+
+def _redact_command(command: list[str]) -> list[str]:
+    redacted = list(command)
+    for index, item in enumerate(redacted[:-1]):
+        if item == "--device":
+            serial = redacted[index + 1]
+            redacted[index + 1] = _mask_serial(serial)
+    return redacted
+
+
+def _mask_serial(serial: str) -> str:
+    if len(serial) <= 4:
+        return "****"
+    if len(serial) <= 8:
+        return f"{serial[:2]}***{serial[-2:]}"
+    return f"{serial[:4]}***{serial[-4:]}"
 
 
 def _add(arguments: list[str], option: str, value: str | bool | None) -> None:
@@ -114,9 +132,9 @@ def _attachment(values: Values) -> tuple[str, list[str]]:
 
 
 def _order_capture(values: Values) -> tuple[str, list[str]]:
-    script = "pdd_order_bot.py" if values["platform"] == "pdd" else "meituan_order_bot.py"
     mode = str(values["mode"])
     args = [mode]
+    _add(args, "--app", values["app"])
     _add(args, "--device", values["device"])
     _add(args, "--adb", values["adb"])
     _add(args, "--output-dir", values["output_dir"])
@@ -129,7 +147,7 @@ def _order_capture(values: Values) -> tuple[str, list[str]]:
         _add(args, "--wait", values["wait"])
         _add(args, "--stable-threshold", values["stable_threshold"])
         _add(args, "--stop-on-stable", values["stop_on_stable"])
-    return script, args
+    return "android_transaction_capture.py", args
 
 
 def _order_ai(values: Values) -> tuple[str, list[str]]:
@@ -202,8 +220,8 @@ def _self_check(values: Values) -> tuple[str, list[str]]:
 WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec(
         "email",
-        "邮件流水",
-        "采集邮件、准备/破解/提取附件，并生成银行流水 normalized 数据。",
+        "邮件/PDF 对账",
+        "采集邮件并准备、解密和提取账单附件，作为安卓 App 流水的校验对账材料。",
         (
             FieldSpec("config", "配置文件", "file", "config.yaml", required=True),
             FieldSpec("stage", "执行阶段", "choice", "all", ("all", "ingest", "prepare", "crack", "extract", "normalize")),
@@ -229,7 +247,7 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec(
         "attachment",
         "附件破解",
-        "检查或处理银行账单 ZIP/PDF 的本地密码；默认不显示真实密码。",
+        "为校验对账材料检查或处理银行账单 ZIP/PDF 密码；默认不显示真实密码。",
         (
             FieldSpec("config", "配置文件", "file", "config.yaml", required=True),
             FieldSpec("target", "处理范围", "choice", "failed", ("failed", "encrypted", "all")),
@@ -242,14 +260,20 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
     ),
     WorkflowSpec(
         "capture",
-        "订单采集",
-        "通过 ADB 采集拼多多或美团订单截图。自动到底模式可按页面稳定度停止。",
+        "安卓 App 采集",
+        "通过 USB 安卓实体机采集 App 交易流水截图；App 与滑动参数来自本机 common.env。",
         (
-            FieldSpec("platform", "平台", "choice", "pdd", ("pdd", "meituan")),
-            FieldSpec("mode", "采集模式", "choice", "capture-until-end", ("capture", "capture-scroll", "capture-until-end")),
+            FieldSpec("app", "安卓 App", "choice", "未配置", ("未配置",), required=True),
+            FieldSpec(
+                "mode",
+                "采集模式",
+                "choice",
+                "capture-until-end",
+                ("check", "capture", "capture-scroll", "capture-until-end"),
+            ),
             FieldSpec("device", "ADB 设备序列号", help_text="单设备时可留空"),
-            FieldSpec("adb", "ADB 程序", "file", "", help_text="留空则从 PATH/常见目录查找"),
-            FieldSpec("output_dir", "截图输出目录", "directory", ""),
+            FieldSpec("adb", "ADB 程序", "file", "", help_text="留空则按 macOS/Windows 规则查找"),
+            FieldSpec("output_dir", "临时输出目录", "directory", "", help_text="留空使用所选 App 配置"),
             FieldSpec("pages", "固定截图数", "int", "5", minimum=1),
             FieldSpec("max_pages", "最大截图数", "int", "50", minimum=1),
             FieldSpec("wait", "滑动等待秒数", "float", "1.5", minimum=0),
@@ -278,7 +302,7 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec(
         "normalize",
         "交易归一",
-        "将银行流水与订单 JSON 汇总为可追溯、可去重的 normalized 中间层。",
+        "汇总交易流水与订单 JSON；目标以安卓截图为主来源，邮件/PDF 仅用于校验。",
         (
             FieldSpec("config", "配置文件", "file", "config.yaml", required=True),
             FieldSpec("source", "数据来源", "choice", "all", ("all", "bank", "orders")),
@@ -339,3 +363,21 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
 
 
 WORKFLOW_BY_KEY = {workflow.key: workflow for workflow in WORKFLOWS}
+
+
+def workflows_for_android_apps(app_names: tuple[str, ...]) -> tuple[WorkflowSpec, ...]:
+    """把本机 App 名称注入统一安卓采集页签的只读下拉框。"""
+    choices = app_names or ("未配置",)
+    result: list[WorkflowSpec] = []
+    for workflow in WORKFLOWS:
+        if workflow.key != "capture":
+            result.append(workflow)
+            continue
+        fields = tuple(
+            replace(field, default=choices[0], choices=choices)
+            if field.key == "app"
+            else field
+            for field in workflow.fields
+        )
+        result.append(replace(workflow, fields=fields))
+    return tuple(result)

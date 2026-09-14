@@ -13,20 +13,11 @@ AI 运行时项目提供，本项目仅通过 OpenAI 兼容 HTTP API 调用已�
 
 订单截图识别还要求服务和模型支持 OpenAI 兼容的图片 data URL 输入。
 
-## 本地配置
+## 连接配置
 
-连接信息写入根目录 `common.env`，不得提交到 Git：
-
-```dotenv
-LLAMACPP_BASE_URL=http://127.0.0.1:8080/v1
-LLAMACPP_MODEL=local-model
-LLAMACPP_API_KEY=
-LLAMACPP_TIMEOUT_SEC=120
-LLAMACPP_MAX_TOKENS=4096
-LLAMACPP_TEMPERATURE=0
-```
-
-这里沿用 `LLAMACPP_` 变量名前缀以保持现有配置兼容，但服务可以由任意实现提供，只要接口兼容。
+连接默认值保留在 `config.yaml` 的 `llamacpp` 段。本项目的 `common.env` 不再重复保存
+`LLAMACPP_*` 项；如外部运行时需要覆盖地址、模型或令牌，应在启动本项目进程时注入对应环境变量。
+变量名前缀仅用于保持现有客户端兼容，服务可以由任意实现提供，只要接口兼容。
 
 ## 验证
 

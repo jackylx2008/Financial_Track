@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import platform
+import os
 import re
 import time
 import tkinter as tk
@@ -12,7 +13,8 @@ from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
-from flows.gui.workflows import FieldSpec, WorkflowSpec, WORKFLOWS, build_command, format_command
+from flows.gui.workflows import FieldSpec, WorkflowSpec, build_command, format_command, workflows_for_android_apps
+from flows.modules.android_capture_config import load_android_app_configs
 from flows.modules.config_loader import get_cloudstation_root, load_config
 
 
@@ -251,7 +253,13 @@ class FinancialTrackApp:
 
         self.notebook = ttk.Notebook(self.root)
         self.notebook.grid(row=0, column=0, sticky="nsew", padx=10, pady=(10, 4))
-        for spec in WORKFLOWS:
+        try:
+            android_apps = load_android_app_configs(os.environ)
+            app_names = tuple(item.name for item in android_apps)
+        except ValueError as exc:
+            app_names = ()
+            self.root.after(0, lambda message=str(exc): self.append_log(f"安卓 App 配置错误：{message}", "error"))
+        for spec in workflows_for_android_apps(app_names):
             panel = WorkflowPanel(self.notebook, self, spec)
             self.panels.append(panel)
             self.notebook.add(panel, text=spec.title)

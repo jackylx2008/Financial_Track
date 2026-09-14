@@ -1,5 +1,7 @@
 # 邮件流水工作归档
 
+> 当前定位：本链路保留用于邮件/PDF 校验、对账和历史数据兼容。新增权威流水统一以安卓 App 截图及其结构化结果为来源。
+
 更新日期：2026-05-17
 
 本文档归档邮件流水链路阶段性工作记录。当前继续开发时，主入口文档为根目录 `README.md` 和 `docs/TODO.md`。
@@ -211,9 +213,8 @@ python flows/financial_email_bot.py --stage normalize
 安卓截图入口：
 
 ```powershell
-python -m py_compile flows/pdd_order_bot.py flows/meituan_order_bot.py flows/android_order/android_order_bot.py
-python flows/pdd_order_bot.py --help
-python flows/meituan_order_bot.py --help
+python -m py_compile flows/android_transaction_capture.py flows/modules/android_adb.py
+python flows/android_transaction_capture.py --help
 ```
 
 ## 后续参考

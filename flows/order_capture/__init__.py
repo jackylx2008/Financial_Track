@@ -1,1 +1,0 @@
-"""Mobile order capture helpers."""

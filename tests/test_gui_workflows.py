@@ -8,7 +8,7 @@ from pathlib import Path
 from queue import Empty
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
-from flows.gui.workflows import WORKFLOW_BY_KEY, build_command, validate_values
+from flows.gui.workflows import WORKFLOW_BY_KEY, build_command, format_command, validate_values
 
 
 def default_values(workflow_key: str) -> dict[str, str | bool]:
@@ -37,14 +37,20 @@ class WorkflowCommandTests(unittest.TestCase):
 
     def test_capture_command_only_emits_mode_specific_limits(self) -> None:
         values = default_values("capture")
-        values["platform"] = "meituan"
+        values["app"] = "示例钱包"
         values["mode"] = "capture-scroll"
         command = build_command(WORKFLOW_BY_KEY["capture"], values, Path("project"))
-        self.assertTrue(command[1].endswith("meituan_order_bot.py"))
+        self.assertTrue(command[1].endswith("android_transaction_capture.py"))
         self.assertEqual(command[2], "capture-scroll")
+        self.assertIn("示例钱包", command)
         self.assertIn("--pages", command)
         self.assertNotIn("--max-pages", command)
         self.assertNotIn("--stable-threshold", command)
+
+    def test_command_preview_masks_device_serial(self) -> None:
+        preview = format_command(["python", "capture.py", "--device", "ABCD12345678"])
+        self.assertIn("ABCD***5678", preview)
+        self.assertNotIn("ABCD12345678", preview)
 
     def test_review_command_switches_entrypoint_by_layer(self) -> None:
         values = default_values("review")
