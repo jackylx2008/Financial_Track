@@ -75,20 +75,24 @@ class LlamaCppClient:
         self.config = config
         self.root_url, self.api_url = normalize_urls(config.base_url)
 
-    def check_server(self) -> tuple[dict[str, Any], dict[str, Any]]:
+    def check_health(self) -> dict[str, Any]:
         logger.info("Checking llama.cpp health endpoint: %s/health", self.root_url)
-        health = request_json(
+        return request_json(
             f"{self.root_url}/health",
             timeout_sec=self.config.timeout_sec,
             api_key=self.config.api_key,
         )
+
+    def list_models(self) -> dict[str, Any]:
         logger.info("Checking llama.cpp models endpoint: %s/models", self.api_url)
-        models = request_json(
+        return request_json(
             f"{self.api_url}/models",
             timeout_sec=self.config.timeout_sec,
             api_key=self.config.api_key,
         )
-        return health, models
+
+    def check_server(self) -> tuple[dict[str, Any], dict[str, Any]]:
+        return self.check_health(), self.list_models()
 
     def ensure_server(self) -> tuple[dict[str, Any], dict[str, Any]]:
         try:
@@ -111,7 +115,7 @@ class LlamaCppClient:
             model_id = item.get("model") or item.get("name") or item.get("id")
             if model_id:
                 ids.append(str(model_id))
-        return ids
+        return list(dict.fromkeys(ids))
 
     def assert_model_available(self, models_payload: dict[str, Any]) -> None:
         model_ids = self.model_ids(models_payload)

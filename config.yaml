@@ -25,6 +25,8 @@ llamacpp:
   base_url: ${LLAMACPP_BASE_URL:-http://127.0.0.1:8080/v1}
   model: ${LLAMACPP_MODEL:-local-model}
   api_key: ${LLAMACPP_API_KEY:-}
+  status_timeout_sec: ${LLAMACPP_STATUS_TIMEOUT_SEC:-3}
+  status_refresh_sec: ${LLAMACPP_STATUS_REFRESH_SEC:-30}
   timeout_sec: ${LLAMACPP_TIMEOUT_SEC:-120}
   max_tokens: ${LLAMACPP_MAX_TOKENS:-4096}
   temperature: ${LLAMACPP_TEMPERATURE:-0}

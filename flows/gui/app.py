@@ -5,15 +5,17 @@ from __future__ import annotations
 import platform
 import os
 import re
+import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from queue import Empty
+from queue import Empty, Queue
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
 from flows.gui.workflows import FieldSpec, WorkflowSpec, build_command, format_command, workflows_for_android_apps
+from flows.modules.ai_service_status import AiServiceStatus, probe_ai_service, status_refresh_seconds
 from flows.modules.android_capture_config import load_android_app_configs
 from flows.modules.config_loader import get_cloudstation_root, load_config
 
@@ -171,6 +173,7 @@ class ConfigPanel(ttk.Frame):
             return
         self.app.config = config
         self.app.apply_config_defaults()
+        self.app.refresh_ai_status(test_chat=True)
         sections = "、".join(sorted(config))
         self.app.append_log(f"配置检查成功；已加载顶层配置：{sections}", "success")
 
@@ -191,16 +194,24 @@ class FinancialTrackApp:
         self.active_panel: WorkflowPanel | None = None
         self.started_at: float | None = None
         self.closing = False
+        self.ai_status_queue: Queue[tuple[AiServiceStatus | None, str]] = Queue()
+        self.ai_checking = False
+        self.last_ai_chat_succeeded: bool | None = None
 
         self.status_var = tk.StringVar(value="就绪")
         self.current_var = tk.StringVar(value="当前对象：—")
         self.elapsed_var = tk.StringVar(value="耗时：00:00:00")
+        self.ai_state_var = tk.StringVar(value="本地 AI：等待检查")
+        self.ai_model_var = tk.StringVar(value="模型：—")
+        self.ai_endpoint_var = tk.StringVar(value="接口：—")
 
         self._configure_window()
         self._build_layout()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(100, self._poll_events)
         self.root.after(250, self._update_elapsed)
+        self.root.after(50, lambda: self.refresh_ai_status(test_chat=True))
+        self.root.after(status_refresh_seconds(self.config) * 1000, self._auto_refresh_ai_status)
 
     def _load_initial_config(self) -> dict[str, object]:
         try:
@@ -244,6 +255,9 @@ class FinancialTrackApp:
         style.configure("Description.TLabel", font=("TkDefaultFont", 10))
         style.configure("Hint.TLabel", foreground="#5f6b7a")
         style.configure("Status.TLabel", padding=(6, 3))
+        style.configure("AiOnline.TLabel", foreground="#14833b", padding=(6, 3))
+        style.configure("AiWarning.TLabel", foreground="#9a6700", padding=(6, 3))
+        style.configure("AiOffline.TLabel", foreground="#b42318", padding=(6, 3))
         style.configure("Accent.TButton", font=("TkDefaultFont", 9, "bold"))
 
     def _build_layout(self) -> None:
@@ -311,6 +325,106 @@ class FinancialTrackApp:
         environment = f"Python {platform.python_version()} · Tk {tk.TkVersion}"
         ttk.Label(status_area, text=environment, style="Status.TLabel").grid(row=1, column=3, sticky="e")
 
+        ai_status_row = ttk.Frame(status_area)
+        ai_status_row.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(2, 0))
+        ai_status_row.columnconfigure(1, weight=1)
+        self.ai_state_label = ttk.Label(
+            ai_status_row,
+            textvariable=self.ai_state_var,
+            style="Status.TLabel",
+        )
+        self.ai_state_label.grid(row=0, column=0, sticky="w")
+        ttk.Label(ai_status_row, textvariable=self.ai_model_var, style="Status.TLabel").grid(
+            row=0, column=1, sticky="w", padx=(12, 0)
+        )
+        self.ai_refresh_button = ttk.Button(
+            ai_status_row,
+            text="测试 AI 连接",
+            command=lambda: self.refresh_ai_status(test_chat=True),
+        )
+        self.ai_refresh_button.grid(row=0, column=2, sticky="e")
+        ttk.Label(status_area, textvariable=self.ai_endpoint_var, style="Hint.TLabel").grid(
+            row=3, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2)
+        )
+
+    def refresh_ai_status(self, test_chat: bool = False) -> None:
+        """在后台读取外部 AI 状态，不阻塞 Tk 主线程。"""
+        if self.ai_checking or self.closing:
+            return
+        self.ai_checking = True
+        self.ai_state_var.set("本地 AI：检查中……")
+        self.ai_refresh_button.configure(state="disabled")
+        config_snapshot = dict(self.config)
+        thread = threading.Thread(
+            target=self._probe_ai_status,
+            args=(config_snapshot, test_chat),
+            daemon=True,
+            name="financial-track-ai-status",
+        )
+        thread.start()
+
+    def _auto_refresh_ai_status(self) -> None:
+        if self.closing:
+            return
+        self.refresh_ai_status()
+        interval_ms = status_refresh_seconds(self.config) * 1000
+        self.root.after(interval_ms, self._auto_refresh_ai_status)
+
+    def _probe_ai_status(self, config: dict[str, object], test_chat: bool) -> None:
+        try:
+            prompt = "你好" if test_chat else None
+            status = probe_ai_service(config, self.project_root, test_prompt=prompt)
+        except Exception as exc:
+            self.ai_status_queue.put((None, f"{type(exc).__name__}: 状态检查失败"))
+            return
+        self.ai_status_queue.put((status, ""))
+
+    def _poll_ai_status(self) -> None:
+        try:
+            while True:
+                status, error = self.ai_status_queue.get_nowait()
+                self.ai_checking = False
+                self.ai_refresh_button.configure(state="normal")
+                if status is None:
+                    self.ai_state_var.set(f"本地 AI：{error}")
+                    self.ai_state_label.configure(style="AiOffline.TLabel")
+                    self.append_log(f"本地 AI {error}", "error")
+                    continue
+                self._apply_ai_status(status)
+        except Empty:
+            pass
+
+    def _apply_ai_status(self, status: AiServiceStatus) -> None:
+        if status.chat_succeeded is not None:
+            self.last_ai_chat_succeeded = status.chat_succeeded
+        chat_verified = self.last_ai_chat_succeeded is True and status.running
+        summary = status.summary
+        if status.chat_succeeded is None and chat_verified:
+            summary = "已启动，最近一次“你好”对话测试正常"
+        self.ai_state_var.set(f"本地 AI：{summary}；健康：{status.health_summary}")
+        if chat_verified or (status.healthy and status.model_available is True):
+            style, tag = "AiOnline.TLabel", "success"
+        elif status.running:
+            style, tag = "AiWarning.TLabel", "warning"
+        else:
+            style, tag = "AiOffline.TLabel", "error"
+        self.ai_state_label.configure(style=style)
+        available = "、".join(status.available_models)
+        if available and status.configured_model not in status.available_models:
+            model_text = f"模型：配置 {status.configured_model}；已加载 {available}"
+        elif available:
+            model_text = f"模型：{status.configured_model}（已加载）"
+        else:
+            model_text = f"模型：{status.configured_model}（来自配置）"
+        self.ai_model_var.set(model_text)
+        self.ai_endpoint_var.set(f"本机接口：{status.base_url}")
+        self.append_log(f"本地 AI 状态：{summary}；{model_text}", tag)
+        if status.chat_succeeded is True:
+            self.append_log("本地 AI 测试发送：你好", "command")
+            self.append_log(f"本地 AI 回复：{status.chat_reply}", "success")
+        elif status.chat_succeeded is False:
+            self.append_log(f"本地 AI“你好”测试失败：{status.chat_error}", "error")
+
     def preview_workflow(self, panel: WorkflowPanel) -> None:
         try:
             command = build_command(panel.spec, panel.values(), self.project_root)
@@ -359,6 +473,7 @@ class FinancialTrackApp:
         self.config_panel.set_running(running)
 
     def _poll_events(self) -> None:
+        self._poll_ai_status()
         try:
             while True:
                 self._handle_event(self.runner.events.get_nowait())

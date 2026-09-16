@@ -75,7 +75,10 @@ processed_data/review/ledger_review.xlsx   # 按月份拆分的人工校核表
 python main.py
 ```
 
-界面从上到下固定为工作流选项卡、当前参数、共享实时日志、总体进度与状态栏。所有耗时流程通过后台
+界面从上到下固定为工作流选项卡、当前参数、共享实时日志、总体进度与状态栏。底部常驻显示外部 AI
+服务是否已启动、健康情况、配置/实际加载模型和本机接口。启动时会发送“你好”验证真实对话能力，并把
+发送内容和模型回复写入日志；也可通过“测试 AI 连接”按钮再次验证。状态探测在后台进行，不会阻塞界面。
+所有耗时流程通过后台
 CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务。GUI 不保存或展示邮箱授权码、附件密码等秘密值，
 这些信息仍由本地 `common.env` 和专用密码文件提供。详细规范见
 [`docs/GUI_DESIGN_REQUIREMENTS.md`](docs/GUI_DESIGN_REQUIREMENTS.md)。
@@ -209,8 +212,9 @@ python flows/taobao_pdf_bot.py
 ## 外部 AI 服务自检
 
 本项目只调用其他项目已启动的 OpenAI 兼容 AI 服务，不负责安装模型、启动服务、管理 CUDA
-运行时或结束服务进程。连接默认值保留在 `config.yaml`；需要覆盖时，由启动本项目的外部运行环境注入
-`LLAMACPP_*` 进程变量，不再重复写入本项目的 `common.env`。
+运行时或结束服务进程。连接默认值保留在 `config.yaml`；需要覆盖时，可由启动本项目的外部运行环境注入
+`LLAMACPP_*` 进程变量，或写入被 Git 忽略的本机 `common.env`。GUI 会异步读取健康接口和模型列表；模型
+接口需要鉴权时，应仅在本机设置 `LLAMACPP_API_KEY`。
 详细接口约定见 [`docs/EXTERNAL_AI_SERVICE.md`](docs/EXTERNAL_AI_SERVICE.md)。
 
 外部服务需提供 `/health`、`/v1/models` 和 `/v1/chat/completions` 接口。
