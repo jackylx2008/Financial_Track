@@ -9,7 +9,7 @@ import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlsplit, urlunsplit
 
 from flows.modules.config_loader import as_float, as_int
 
@@ -50,6 +50,24 @@ def normalize_urls(base_url: str) -> tuple[str, str]:
     return root_url, api_url
 
 
+def safe_base_url(value: str) -> str:
+    """返回适合界面展示且不包含认证信息的服务地址。"""
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    if not parsed.scheme or not parsed.hostname:
+        return value[:120]
+    host = parsed.hostname
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    try:
+        port = parsed.port
+    except ValueError:
+        return value[:120]
+    netloc = f"{host}:{port}" if port else host
+    return urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", ""))
+
+
 def request_json(
     url: str,
     payload: dict[str, Any] | None = None,
@@ -73,6 +91,7 @@ def request_json(
 class LlamaCppClient:
     def __init__(self, config: LlamaCppConfig) -> None:
         self.config = config
+        self.resolved_model = config.model
         self.root_url, self.api_url = normalize_urls(config.base_url)
 
     def check_health(self) -> dict[str, Any]:
@@ -119,13 +138,18 @@ class LlamaCppClient:
 
     def assert_model_available(self, models_payload: dict[str, Any]) -> None:
         model_ids = self.model_ids(models_payload)
-        if self.config.model not in model_ids:
+        if self.config.model in model_ids:
+            self.resolved_model = self.config.model
+        elif self.config.model == "local-model" and len(model_ids) == 1:
+            self.resolved_model = model_ids[0]
+            logger.info("Using the only loaded local AI model: %s", self.resolved_model)
+        else:
             raise RuntimeError(f"Configured model is not available: {self.config.model}. Available: {model_ids}")
-        logger.info("Configured llama.cpp model is available: %s", self.config.model)
+        logger.info("Configured llama.cpp model is available: %s", self.resolved_model)
 
     def chat(self, prompt: str, max_tokens: int | None = None) -> str:
         payload = {
-            "model": self.config.model,
+            "model": self.resolved_model,
             "temperature": self.config.temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
             "messages": [{"role": "user", "content": prompt}],
@@ -142,7 +166,7 @@ class LlamaCppClient:
     def chat_with_image(self, prompt: str, image_path: Path, max_tokens: int | None = None) -> str:
         image_url = image_to_data_url(image_path)
         payload = {
-            "model": self.config.model,
+            "model": self.resolved_model,
             "temperature": self.config.temperature,
             "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
             "messages": [

@@ -21,7 +21,12 @@ class FinancialEmailImapClient:
         self._client: imaplib.IMAP4_SSL | None = None
 
     def __enter__(self) -> "FinancialEmailImapClient":
-        logger.info("Connecting to IMAP host=%s port=%s user=%s", self.config.host, self.config.port, self.config.user)
+        logger.info(
+            "Connecting to IMAP host=%s port=%s user_configured=%s",
+            self.config.host,
+            self.config.port,
+            bool(self.config.user),
+        )
         self._client = imaplib.IMAP4_SSL(self.config.host, self.config.port, timeout=30)
         self._client.login(self.config.user, self.config.password)
         self._send_client_id()
@@ -39,15 +44,8 @@ class FinancialEmailImapClient:
 
     def fetch_messages(self) -> list[dict[str, Any]]:
         client = self._require_client()
-        criteria = self._build_search_criteria()
-        logger.info("Searching IMAP mailbox=%s criteria=%s", self.config.mailbox, criteria)
-        status, payload = client.uid("search", None, *criteria)
-        if status != "OK":
-            raise RuntimeError(f"IMAP search failed: {status} {payload!r}")
-
-        uid_blob = payload[0] if payload else b""
-        uids = list(reversed(uid_blob.split()))
-        if self.config.max_messages:
+        uids = self._search_uids()
+        if self.config.max_messages and not self.config.all_history:
             uids = uids[: self.config.max_messages]
 
         logger.info("IMAP search returned %s messages to fetch after max_messages limit.", len(uids))
@@ -77,6 +75,22 @@ class FinancialEmailImapClient:
         logger.info("Finished fetching IMAP messages: fetched=%s expected=%s elapsed=%.1fs", len(messages), len(uids), time.monotonic() - started_at)
         return messages
 
+    def count_messages(self) -> int:
+        """统计当前搜索范围内的邮件数量，不下载邮件正文或附件。"""
+        count = len(self._search_uids())
+        logger.info("IMAP search count completed: messages=%s", count)
+        return count
+
+    def _search_uids(self) -> list[bytes]:
+        client = self._require_client()
+        criteria = self._build_search_criteria()
+        logger.info("Searching IMAP mailbox=%s criteria=%s", self.config.mailbox, criteria)
+        status, payload = client.uid("search", None, *criteria)
+        if status != "OK":
+            raise RuntimeError(f"IMAP search failed: {status} {payload!r}")
+        uid_blob = payload[0] if payload else b""
+        return list(reversed(uid_blob.split()))
+
     def _select_mailbox(self) -> None:
         client = self._require_client()
         status, payload = client.select(self.config.mailbox, readonly=True)
@@ -87,12 +101,17 @@ class FinancialEmailImapClient:
         client = self._require_client()
         imaplib.Commands["ID"] = ("AUTH", "SELECTED")
         payload = _format_id_payload(self.config.client_id)
-        logger.info("Sending IMAP ID command for provider compatibility: %s", payload)
+        logger.info(
+            "Sending IMAP ID command for provider compatibility: fields=%s",
+            sorted(self.config.client_id),
+        )
         status, response = client._simple_command("ID", payload)
         if status != "OK":
             logger.warning("IMAP ID command was not accepted: status=%s response=%s", status, response)
 
     def _build_search_criteria(self) -> list[str]:
+        if self.config.all_history:
+            return ["ALL"]
         criteria = ["SINCE", _imap_date(self.config.since)]
         if self.config.before:
             criteria.extend(["BEFORE", _imap_date(self.config.before)])

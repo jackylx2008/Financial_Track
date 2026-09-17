@@ -6,10 +6,9 @@ import urllib.error
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
-from urllib.parse import urlsplit, urlunsplit
 
 from flows.modules.config_loader import as_int
-from flows.modules.llamacpp_client import LlamaCppClient, LlamaCppConfig
+from flows.modules.llamacpp_client import LlamaCppClient, LlamaCppConfig, safe_base_url
 
 
 @dataclass(frozen=True)
@@ -27,13 +26,6 @@ class AiServiceStatus:
     chat_succeeded: bool | None
     chat_reply: str
     chat_error: str
-
-
-def status_refresh_seconds(config: Mapping[str, Any]) -> int:
-    """返回 GUI 自动刷新间隔，并限制过于频繁或过长的配置。"""
-    raw = config.get("llamacpp", {})
-    raw_mapping = raw if isinstance(raw, Mapping) else {}
-    return max(10, min(as_int(raw_mapping.get("status_refresh_sec"), 30), 3600))
 
 
 def probe_ai_service(
@@ -95,7 +87,7 @@ def probe_ai_service(
         health_summary=health_summary,
         configured_model=client_config.model,
         available_models=model_ids,
-        base_url=_safe_url(client_config.base_url),
+        base_url=safe_base_url(client_config.base_url),
         chat_succeeded=chat_succeeded,
         chat_reply=chat_reply,
         chat_error=chat_error,
@@ -152,21 +144,3 @@ def _safe_error(exc: Exception) -> str:
         reason = exc.reason
         return f"{type(reason).__name__}: {str(reason)[:80]}"
     return f"{type(exc).__name__}: {str(exc)[:80]}"
-
-
-def _safe_url(value: str) -> str:
-    """移除 URL 用户信息、查询参数和片段，避免 GUI 意外展示秘密值。"""
-    if not value:
-        return ""
-    parsed = urlsplit(value)
-    if not parsed.scheme or not parsed.hostname:
-        return value[:120]
-    host = parsed.hostname
-    if ":" in host and not host.startswith("["):
-        host = f"[{host}]"
-    try:
-        port = parsed.port
-    except ValueError:
-        return value[:120]
-    netloc = f"{host}:{port}" if port else host
-    return urlunsplit((parsed.scheme, netloc, parsed.path.rstrip("/"), "", ""))

@@ -5,8 +5,8 @@ import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
-from flows.modules.ai_service_status import probe_ai_service, status_refresh_seconds
-from flows.modules.llamacpp_client import LlamaCppClient, LlamaCppConfig
+from flows.modules.ai_service_status import probe_ai_service
+from flows.modules.llamacpp_client import LlamaCppClient, LlamaCppConfig, safe_base_url
 
 
 class ExternalAiClientTests(unittest.TestCase):
@@ -43,7 +43,14 @@ class ExternalAiClientTests(unittest.TestCase):
 
         self.assertFalse(hasattr(client, "start_server"))
 
-    def test_gui_status_keeps_running_state_when_models_require_authentication(self) -> None:
+    def test_default_model_alias_uses_the_only_loaded_model(self) -> None:
+        client = LlamaCppClient(LlamaCppConfig.from_config({}, Path("project")))
+
+        client.assert_model_available({"data": [{"id": "demo-loaded-model"}]})
+
+        self.assertEqual(client.resolved_model, "demo-loaded-model")
+
+    def test_on_demand_probe_keeps_running_state_when_models_require_authentication(self) -> None:
         config = {
             "llamacpp": {
                 "base_url": "http://example.invalid:8080/v1",
@@ -70,7 +77,7 @@ class ExternalAiClientTests(unittest.TestCase):
         self.assertEqual(status.configured_model, "demo-model")
         self.assertIn("HTTP 401", status.summary)
 
-    def test_gui_status_reports_loaded_model(self) -> None:
+    def test_on_demand_probe_reports_loaded_model(self) -> None:
         config = {
             "llamacpp": {
                 "base_url": "http://demo:secret@example.invalid:8080/v1?token=hidden",
@@ -93,7 +100,7 @@ class ExternalAiClientTests(unittest.TestCase):
         self.assertNotIn("secret", status.base_url)
         self.assertNotIn("hidden", status.base_url)
 
-    def test_gui_status_reports_service_not_started(self) -> None:
+    def test_on_demand_probe_reports_service_not_started(self) -> None:
         offline = urllib.error.URLError(ConnectionRefusedError("offline"))
         with (
             patch.object(LlamaCppClient, "check_health", side_effect=offline),
@@ -105,12 +112,12 @@ class ExternalAiClientTests(unittest.TestCase):
         self.assertFalse(status.healthy)
         self.assertIn("未检测到服务", status.summary)
 
-    def test_gui_status_refresh_interval_is_bounded(self) -> None:
-        self.assertEqual(status_refresh_seconds({}), 30)
-        self.assertEqual(status_refresh_seconds({"llamacpp": {"status_refresh_sec": 1}}), 10)
-        self.assertEqual(status_refresh_seconds({"llamacpp": {"status_refresh_sec": 9999}}), 3600)
+    def test_gui_can_display_ai_configuration_without_credentials(self) -> None:
+        value = safe_base_url("http://demo:secret@example.invalid:8080/v1?token=hidden")
 
-    def test_gui_status_runs_hello_chat_test_and_keeps_reply(self) -> None:
+        self.assertEqual(value, "http://example.invalid:8080/v1")
+
+    def test_on_demand_probe_can_run_an_explicit_chat_test(self) -> None:
         config = {"llamacpp": {"model": "demo-model"}}
         with (
             patch.object(LlamaCppClient, "check_health", return_value={"status": "ok"}),

@@ -9,7 +9,10 @@ from flows.context import AppContext
 from flows.modules.financial_attachment_reader import read_attachment_transactions
 from flows.modules.financial_email_record_reader import read_email_candidate_transactions
 from flows.modules.bank_transaction_deduper import dedupe_transactions
+from flows.modules.bank_transaction_filter import filter_transactions
+from flows.modules.bank_transaction_full_review_html import write_full_review_html
 from flows.modules.bank_transaction_quality_report import build_quality_report
+from flows.modules.financial_document_ai import FinancialDocumentAiFallback
 
 
 logger = logging.getLogger(__name__)
@@ -26,14 +29,17 @@ def run(
     output_path = ctx.resolve_path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    ai_fallback = FinancialDocumentAiFallback(ctx.config, ctx.project_root)
+    attachment_transactions, attachment_stats = read_attachment_transactions(attachment_manifest_file, ai_fallback)
     email_transactions, email_stats = read_email_candidate_transactions(email_records_file)
-    attachment_transactions, attachment_stats = read_attachment_transactions(attachment_manifest_file)
     raw_transactions = email_transactions + attachment_transactions
-    deduped_transactions, dedupe_stats = dedupe_transactions(raw_transactions)
+    filtered_transactions, filter_stats = filter_transactions(raw_transactions)
+    deduped_transactions, dedupe_stats = dedupe_transactions(filtered_transactions)
 
     jsonl_path = output_path / "bank_transactions.jsonl"
     json_path = output_path / "bank_transactions.json"
     report_path = output_path / "bank_transactions_quality_report.md"
+    full_review_html_path = output_path / "bank_transactions_full_review.html"
 
     with jsonl_path.open("w", encoding="utf-8") as file:
         for transaction in deduped_transactions:
@@ -46,10 +52,12 @@ def run(
             raw_count=len(raw_transactions),
             email_stats=email_stats,
             attachment_stats=attachment_stats,
+            filter_stats=filter_stats,
             dedupe_stats=dedupe_stats,
         ),
         encoding="utf-8",
     )
+    full_review_html = write_full_review_html(deduped_transactions, full_review_html_path)
 
     summary = {
         "email_records_file": str(email_records_file),
@@ -58,9 +66,13 @@ def run(
         "deduped_transactions": len(deduped_transactions),
         "email_transactions": len(email_transactions),
         "attachment_transactions": len(attachment_transactions),
+        "filtered_transactions": len(filtered_transactions),
+        "rejected_non_transactions": filter_stats["rejected"],
         "jsonl": str(jsonl_path),
         "json": str(json_path),
         "quality_report": str(report_path),
+        "full_review_html": full_review_html,
+        "ai_fallback": ai_fallback.stats(),
     }
     logger.info("Finished bank transaction consolidation: %s", summary)
     return summary

@@ -98,7 +98,7 @@ def _read_local_eml_files(config: FinancialEmailConfig) -> list[dict[str, Any]]:
     if not eml_dir.exists():
         raise FileNotFoundError(f"EML directory does not exist: {eml_dir}")
     files = sorted(eml_dir.glob("*.eml"))
-    if config.max_messages:
+    if config.max_messages and not config.all_history:
         files = files[: config.max_messages]
     logger.info("Reading %s local EML files from %s", len(files), eml_dir)
     return [

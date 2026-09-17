@@ -28,17 +28,7 @@ def run(ctx: AppContext, inventory_path: str | Path, password_env_path: str | Pa
     for index, item in enumerate(inventory, start=1):
         result = extract_attachment(item=item, password_store=password_store, output_root=output_path)
         results.append(result)
-        logger.info(
-            "Attachment extract %s/%s status=%s kind=%s bank=%s source=%s candidates=%s path=%s",
-            index,
-            len(inventory),
-            result["status"],
-            result["kind"],
-            result.get("bank_key", ""),
-            result.get("password_source", ""),
-            result.get("password_candidate_count", 0),
-            result["path"],
-        )
+        _log_extraction_result(index, len(inventory), result)
 
     manifest_path = output_path / "attachment_extract_manifest.json"
     failures_path = output_path / "attachment_extract_failures.md"
@@ -56,6 +46,31 @@ def run(ctx: AppContext, inventory_path: str | Path, password_env_path: str | Pa
     }
     logger.info("Finished financial attachment extraction: %s", summary)
     return summary
+
+
+def _log_extraction_result(index: int, total: int, result: dict[str, Any]) -> None:
+    if result["status"] == "success":
+        logger.info(
+            "Attachment extract %s/%s status=%s kind=%s bank=%s source=%s candidates=%s path=%s",
+            index,
+            total,
+            result["status"],
+            result["kind"],
+            result.get("bank_key", ""),
+            result.get("password_source", ""),
+            result.get("password_candidate_count", 0),
+            result["path"],
+        )
+        return
+    logger.warning(
+        "邮件附件处理失败 %s/%s：类型=%s 状态=%s 文件=%s 原因=%s",
+        index,
+        total,
+        result.get("kind", ""),
+        result["status"],
+        result["path"],
+        result.get("reason", ""),
+    )
 
 
 def _read_inventory(path: Path) -> list[dict[str, Any]]:

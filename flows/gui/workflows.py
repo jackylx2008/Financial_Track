@@ -11,7 +11,16 @@ from pathlib import Path
 from typing import Callable, Literal, Mapping
 
 
-FieldKind = Literal["text", "choice", "int", "float", "bool", "file", "save_file", "directory"]
+FieldKind = Literal[
+    "text",
+    "choice",
+    "int",
+    "float",
+    "bool",
+    "file",
+    "save_file",
+    "directory",
+]
 Values = Mapping[str, str | bool]
 ArgumentBuilder = Callable[[Values], tuple[str, list[str]]]
 
@@ -36,6 +45,7 @@ class WorkflowSpec:
     description: str
     fields: tuple[FieldSpec, ...]
     builder: ArgumentBuilder
+    form_columns: int = 2
 
 
 def build_command(spec: WorkflowSpec, values: Values, project_root: Path) -> list[str]:
@@ -104,31 +114,13 @@ def _add(arguments: list[str], option: str, value: str | bool | None) -> None:
 
 def _email(values: Values) -> tuple[str, list[str]]:
     args: list[str] = []
-    _add(args, "--config", values["config"])
-    _add(args, "--stage", values["stage"])
-    _add(args, "--since", values["since"])
-    _add(args, "--before", values["before"])
-    _add(args, "--max-messages", values["max_messages"])
-    _add(args, "--output-dir", values["output_dir"])
-    _add(args, "--eml-dir", values["eml_dir"])
-    _add(args, "--records", values["records"])
-    _add(args, "--inventory", values["inventory"])
-    _add(args, "--extract-output-dir", values["extract_output_dir"])
-    _add(args, "--attachment-manifest", values["attachment_manifest"])
-    _add(args, "--normalized-output-dir", values["normalized_output_dir"])
-    _add(args, "--skip-crack", values["skip_crack"])
+    _add(args, "--config", values.get("config", "config.yaml"))
+    _add(args, "--stage", values.get("stage", "all"))
+    _add(args, "--since", values.get("since"))
+    _add(args, "--before", values.get("before"))
+    _add(args, "--all-history", values.get("all_history", False))
+    _add(args, "--skip-crack", values.get("skip_crack", True))
     return "financial_email_bot.py", args
-
-
-def _attachment(values: Values) -> tuple[str, list[str]]:
-    args: list[str] = []
-    _add(args, "--config", values["config"])
-    _add(args, "--target", values["target"])
-    _add(args, "--inventory", values["inventory"])
-    _add(args, "--password-env", values["password_env"])
-    _add(args, "--check-tools", values["check_tools"])
-    _add(args, "--list-targets", values["list_targets"])
-    return "financial_attachment_crack.py", args
 
 
 def _order_capture(values: Values) -> tuple[str, list[str]]:
@@ -220,43 +212,27 @@ def _self_check(values: Values) -> tuple[str, list[str]]:
 WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec(
         "email",
-        "邮件/PDF 对账",
-        "采集邮件并准备、解密和提取账单附件，作为安卓 App 流水的校验对账材料。",
+        "邮件获取账单",
+        "从邮箱获取账单邮件，并按默认目录准备、解密、提取和归一化附件。",
         (
-            FieldSpec("config", "配置文件", "file", "config.yaml", required=True),
-            FieldSpec("stage", "执行阶段", "choice", "all", ("all", "ingest", "prepare", "crack", "extract", "normalize")),
-            FieldSpec("since", "开始日期", default="2024-01-01", help_text="YYYY-MM-DD"),
-            FieldSpec("before", "结束日期", help_text="YYYY-MM-DD，可留空"),
-            FieldSpec("max_messages", "最大邮件数", "int", "200", minimum=1),
-            FieldSpec("output_dir", "邮件输出目录", "directory", "raw_data/financial_email"),
-            FieldSpec("eml_dir", "本地 EML 目录", "directory", "", help_text="填写后不连接 IMAP"),
-            FieldSpec("records", "邮件记录 JSONL", "file", "raw_data/financial_email/financial_email_records.jsonl"),
-            FieldSpec("inventory", "附件清单", "file", "raw_data/financial_email/attachment_inventory.json"),
-            FieldSpec("extract_output_dir", "附件提取目录", "directory", "raw_data/financial_email/extracted_attachments"),
             FieldSpec(
-                "attachment_manifest",
-                "附件提取清单",
-                "file",
-                "raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json",
+                "since",
+                "检查起始日期",
+                default="2015-01-01",
+                help_text="默认值来自配置，可人工修改；YYYY-MM-DD",
             ),
-            FieldSpec("normalized_output_dir", "归一化输出目录", "directory", "processed_data/normalized"),
+            FieldSpec("before", "检查结束日期", help_text="可人工修改；YYYY-MM-DD，可留空"),
+            FieldSpec(
+                "all_history",
+                "扫描邮箱全部历史邮件（忽略日期/数量限制）",
+                "bool",
+                False,
+                help_text="忽略日期和数量限制；仅主动测试全量账单时勾选",
+            ),
             FieldSpec("skip_crack", "跳过密码破解", "bool", True),
         ),
         _email,
-    ),
-    WorkflowSpec(
-        "attachment",
-        "附件破解",
-        "为校验对账材料检查或处理银行账单 ZIP/PDF 密码；默认不显示真实密码。",
-        (
-            FieldSpec("config", "配置文件", "file", "config.yaml", required=True),
-            FieldSpec("target", "处理范围", "choice", "failed", ("failed", "encrypted", "all")),
-            FieldSpec("inventory", "附件清单", "file", "raw_data/financial_email/attachment_inventory.json"),
-            FieldSpec("password_env", "本地密码文件", "file", "financial_attachment_passwords.env"),
-            FieldSpec("check_tools", "仅检查外部工具", "bool", False),
-            FieldSpec("list_targets", "仅列出处理对象", "bool", False),
-        ),
-        _attachment,
+        form_columns=2,
     ),
     WorkflowSpec(
         "capture",

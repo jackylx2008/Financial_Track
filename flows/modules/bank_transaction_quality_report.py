@@ -10,6 +10,7 @@ def build_quality_report(
     raw_count: int,
     email_stats: dict[str, Any],
     attachment_stats: dict[str, Any],
+    filter_stats: dict[str, Any],
     dedupe_stats: dict[str, Any],
 ) -> str:
     by_bank = Counter(item.get("bank_key", "unknown") for item in transactions)
@@ -31,11 +32,15 @@ def build_quality_report(
         "",
         "## 汇总",
         "",
-        f"- 邮件候选交易数：{email_stats.get('candidates_seen', 0)}",
+        f"- 已停用的旧版通用邮件候选数：{email_stats.get('candidates_seen', 0)}",
         f"- 邮件候选转流水数：{email_stats.get('transactions', 0)}",
+        f"- 银行专用邮件解析数：{email_stats.get('deterministic_transactions', 0)}",
+        f"- 本地 AI 邮件解析数：{email_stats.get('ai_transactions', 0)}",
+        f"- 旧版通用候选转流水数：{email_stats.get('legacy_transactions', 0)}",
         f"- 附件文件读取数：{attachment_stats.get('files_seen', 0)}",
         f"- 附件转流水数：{attachment_stats.get('transactions', 0)}",
         f"- 去重前流水数：{raw_count}",
+        f"- 过滤非交易记录数：{filter_stats.get('rejected', 0)}",
         f"- 去重后流水数：{len(transactions)}",
         f"- 合并重复数：{dedupe_stats.get('duplicates_merged', 0)}",
         f"- 缺金额数：{missing_amount}",
@@ -52,6 +57,10 @@ def build_quality_report(
     lines.extend(f"- `{account}`：{count}" for account, count in sorted(by_account.items()))
     lines.extend(["", "## 合并来源数量分布", ""])
     lines.extend(f"- `{count}` 个来源：{total}" for count, total in sorted(source_counts.items()))
+    filter_reasons = filter_stats.get("reasons", {})
+    if filter_reasons:
+        lines.extend(["", "## 非交易过滤统计", ""])
+        lines.extend(f"- `{reason}`：{count}" for reason, count in sorted(filter_reasons.items()))
     failures = attachment_stats.get("parse_failures", [])
     if failures:
         lines.extend(["", "## 附件解析失败", ""])

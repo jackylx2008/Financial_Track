@@ -8,7 +8,12 @@ from pathlib import Path
 from queue import Empty
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
-from flows.gui.workflows import WORKFLOW_BY_KEY, build_command, format_command, validate_values
+from flows.gui.workflows import (
+    WORKFLOW_BY_KEY,
+    build_command,
+    format_command,
+    validate_values,
+)
 
 
 def default_values(workflow_key: str) -> dict[str, str | bool]:
@@ -19,21 +24,55 @@ def default_values(workflow_key: str) -> dict[str, str | bool]:
 class WorkflowCommandTests(unittest.TestCase):
     def test_every_workflow_builds_an_existing_entrypoint_from_defaults(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
-        self.assertEqual(len(WORKFLOW_BY_KEY), 9)
+        self.assertEqual(len(WORKFLOW_BY_KEY), 8)
         for key, spec in WORKFLOW_BY_KEY.items():
             with self.subTest(workflow=key):
                 command = build_command(spec, default_values(key), project_root)
                 self.assertTrue(Path(command[1]).is_file(), command[1])
                 self.assertEqual(Path(command[1]).parent, project_root / "flows")
 
-    def test_email_command_contains_selected_stage(self) -> None:
+    def test_email_page_is_compact_and_runs_complete_pipeline(self) -> None:
+        spec = WORKFLOW_BY_KEY["email"]
+        self.assertEqual(spec.title, "邮件获取账单")
+        self.assertEqual(
+            [field.key for field in spec.fields],
+            [
+                "since",
+                "before",
+                "all_history",
+                "skip_crack",
+            ],
+        )
+        self.assertEqual(default_values("email")["since"], "2015-01-01")
         values = default_values("email")
-        values["stage"] = "normalize"
+        values["config"] = "D:/settings/financial.yaml"
         command = build_command(WORKFLOW_BY_KEY["email"], values, Path("project"))
         self.assertEqual(command[0], sys.executable)
         self.assertTrue(command[1].endswith("financial_email_bot.py"))
-        self.assertIn("normalize", command)
+        self.assertEqual(command[command.index("--stage") + 1], "all")
+        self.assertEqual(command[command.index("--config") + 1], "D:/settings/financial.yaml")
         self.assertIn("--skip-crack", command)
+        self.assertNotIn("--output-dir", command)
+        self.assertNotIn("--max-messages", command)
+
+    def test_email_command_uses_configured_mailbox_and_supports_all_history(self) -> None:
+        values = default_values("email")
+        values["stage"] = "check"
+        values["all_history"] = True
+        command = build_command(WORKFLOW_BY_KEY["email"], values, Path("project"))
+
+        self.assertIn("check", command)
+        self.assertNotIn("--mailbox", command)
+        self.assertIn("--all-history", command)
+
+    def test_email_command_uses_manually_edited_dates(self) -> None:
+        values = default_values("email")
+        values["since"] = "2020-02-03"
+        values["before"] = "2026-04-05"
+        command = build_command(WORKFLOW_BY_KEY["email"], values, Path("project"))
+
+        self.assertEqual(command[command.index("--since") + 1], "2020-02-03")
+        self.assertEqual(command[command.index("--before") + 1], "2026-04-05")
 
     def test_capture_command_only_emits_mode_specific_limits(self) -> None:
         values = default_values("capture")

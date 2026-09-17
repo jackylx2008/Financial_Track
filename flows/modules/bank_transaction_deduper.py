@@ -26,7 +26,9 @@ def _dedupe_key(transaction: dict[str, Any]) -> str:
     reference = transaction.get("transaction_reference")
     if reference:
         return "|".join(["ref", transaction.get("bank_key", ""), transaction.get("account_key", ""), str(reference)])
-    date_key = str(transaction.get("transaction_time", ""))[:10] or str(transaction.get("posting_date", ""))
+    transaction_time = str(transaction.get("transaction_time", ""))
+    date_key = transaction_time if len(transaction_time) > 10 else transaction_time[:10]
+    date_key = date_key or str(transaction.get("posting_date", ""))
     party = normalize_text_key(transaction.get("counterparty") or transaction.get("merchant") or transaction.get("summary", ""))
     return "|".join(
         [
@@ -45,6 +47,7 @@ def _merge_transactions(existing: dict[str, Any], incoming: dict[str, Any]) -> d
     merged = dict(existing)
     for field in [
         "bank_name",
+        "account_full_name",
         "account_tail",
         "transaction_time",
         "posting_date",

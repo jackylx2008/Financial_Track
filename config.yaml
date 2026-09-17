@@ -26,7 +26,6 @@ llamacpp:
   model: ${LLAMACPP_MODEL:-local-model}
   api_key: ${LLAMACPP_API_KEY:-}
   status_timeout_sec: ${LLAMACPP_STATUS_TIMEOUT_SEC:-3}
-  status_refresh_sec: ${LLAMACPP_STATUS_REFRESH_SEC:-30}
   timeout_sec: ${LLAMACPP_TIMEOUT_SEC:-120}
   max_tokens: ${LLAMACPP_MAX_TOKENS:-4096}
   temperature: ${LLAMACPP_TEMPERATURE:-0}
@@ -34,7 +33,7 @@ llamacpp:
 financial_email:
   output_dir: ${FINANCIAL_EMAIL_OUTPUT_DIR:-./raw_data/financial_email}
   mailbox: ${FINANCIAL_EMAIL_MAILBOX:-INBOX}
-  since: ${FINANCIAL_EMAIL_SINCE:-2024-01-01}
+  since: ${FINANCIAL_EMAIL_SINCE:-2015-01-01}
   before: ${FINANCIAL_EMAIL_BEFORE:-}
   max_messages: ${FINANCIAL_EMAIL_MAX_MESSAGES:-200}
   subject_keywords: ${FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON:-["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]}
@@ -78,6 +77,12 @@ financial_email:
 
 financial_attachments:
   password_env_file: ${FINANCIAL_ATTACHMENT_PASSWORD_ENV_FILE:-./financial_attachment_passwords.env}
+
+financial_document_ai_fallback:
+  enabled: ${FINANCIAL_DOCUMENT_AI_FALLBACK_ENABLED:-true}
+  max_documents: ${FINANCIAL_DOCUMENT_AI_FALLBACK_MAX_DOCUMENTS:-10}
+  max_chars: ${FINANCIAL_DOCUMENT_AI_FALLBACK_MAX_CHARS:-24000}
+  max_tokens: ${FINANCIAL_DOCUMENT_AI_FALLBACK_MAX_TOKENS:-4096}
 
 financial_attachment_cracker:
   hashcat_path: ${FINANCIAL_ATTACHMENT_HASHCAT_PATH:-../hashcat/hashcat.exe}

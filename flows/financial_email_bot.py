@@ -11,11 +11,12 @@
 
 可选参数：
   --config               配置文件路径，默认 `config.yaml`。
-  --stage                运行阶段：all、ingest、prepare、crack、extract、normalize；默认 all。
+  --stage                运行阶段：check、all、ingest、prepare、crack、extract、normalize；默认 all。
   --mailbox              IMAP 邮箱目录，未传入时使用 `financial_email.mailbox`。
   --since                起始日期 `YYYY-MM-DD`，未传入时使用 `financial_email.since`。
   --before               结束日期 `YYYY-MM-DD`。
   --max-messages         IMAP 日期搜索后最多检查的邮件数。
+  --all-history          扫描邮箱全部历史邮件，忽略日期和数量限制。
   --output-dir           输出目录，默认 `raw_data/financial_email`。
   --eml-dir              解析本地 `.eml` 文件目录，传入后不连接 IMAP。
   --no-save-eml          不保存原始 `.eml` 文件。
@@ -57,6 +58,7 @@ from flows.workflows.financial_attachment_prepare import run as run_attachment_p
 from flows.workflows.financial_email_ingest import run as run_email_ingest
 from flows.workflows.transaction_normalize import run as run_transaction_normalize
 from flows.modules.financial_email_config import FinancialEmailConfig
+from flows.modules.financial_email_imap import FinancialEmailImapClient
 
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="config.yaml", help="Path to config.yaml.")
     parser.add_argument(
         "--stage",
-        choices=["all", "ingest", "prepare", "crack", "extract", "normalize"],
+        choices=["check", "all", "ingest", "prepare", "crack", "extract", "normalize"],
         default="all",
         help="Workflow stage to run. Defaults to all.",
     )
@@ -75,6 +77,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--since", help="Fetch emails since YYYY-MM-DD. Defaults to config financial_email.since.")
     parser.add_argument("--before", help="Fetch emails before YYYY-MM-DD.")
     parser.add_argument("--max-messages", type=int, help="Maximum messages to inspect after IMAP date search.")
+    parser.add_argument(
+        "--all-history",
+        action="store_true",
+        help="Scan the complete mailbox history and ignore date/message limits.",
+    )
     parser.add_argument("--output-dir", help="Output directory. Defaults to raw_data/financial_email.")
     parser.add_argument("--eml-dir", help="Parse existing .eml files instead of connecting to IMAP.")
     parser.add_argument("--no-save-eml", action="store_true", help="Do not persist raw .eml files.")
@@ -128,6 +135,8 @@ def main() -> int:
     summary: dict[str, Any] = {}
 
     stages = resolve_stages(args)
+    if "check" in stages:
+        summary["check"] = run_connection_check(ctx, args)
     if "ingest" in stages:
         summary["ingest"] = run_ingest_stage(ctx, args)
     if "prepare" in stages:
@@ -149,6 +158,33 @@ def resolve_stages(args: argparse.Namespace) -> list[str]:
     if args.stage == "all":
         return ["ingest", "prepare", "crack", "extract", "normalize"]
     return [args.stage]
+
+
+def run_connection_check(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:
+    config = FinancialEmailConfig.from_context(ctx, args)
+    if not config.host or not config.user or not config.password:
+        raise RuntimeError("126 邮箱 IMAP 主机、账号和授权码尚未完整配置。")
+    logger.info(
+        "Checking financial email IMAP connection: host=%s port=%s mailbox=%s",
+        config.host,
+        config.port,
+        config.mailbox,
+    )
+    with FinancialEmailImapClient(config) as client:
+        messages_found = client.count_messages()
+    logger.info(
+        "Financial email IMAP connection check succeeded: mailbox=%s messages_found=%s",
+        config.mailbox,
+        messages_found,
+    )
+    return {
+        "status": "ok",
+        "host": config.host,
+        "port": config.port,
+        "mailbox": config.mailbox,
+        "messages_found": messages_found,
+        "search_scope": "all_history" if config.all_history else "date_range",
+    }
 
 
 def run_ingest_stage(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:

@@ -73,6 +73,7 @@ class FinancialEmailConfig:
     since: str
     before: str
     max_messages: int
+    all_history: bool
     output_dir: Path
     eml_dir: Path | None
     save_eml: bool
@@ -114,6 +115,7 @@ class FinancialEmailConfig:
             since=str(args.since or section.get("since", "2024-01-01")),
             before=str(args.before or section.get("before", "")),
             max_messages=as_int(max_messages_value, 200),
+            all_history=bool(getattr(args, "all_history", False)),
             output_dir=output_dir,
             eml_dir=eml_dir,
             save_eml=not args.no_save_eml,

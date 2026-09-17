@@ -75,13 +75,20 @@ processed_data/review/ledger_review.xlsx   # 按月份拆分的人工校核表
 python main.py
 ```
 
-界面从上到下固定为工作流选项卡、当前参数、共享实时日志、总体进度与状态栏。底部常驻显示外部 AI
-服务是否已启动、健康情况、配置/实际加载模型和本机接口。启动时会发送“你好”验证真实对话能力，并把
-发送内容和模型回复写入日志；也可通过“测试 AI 连接”按钮再次验证。状态探测在后台进行，不会阻塞界面。
+界面从上到下固定为工作流选项卡、当前参数、共享实时日志、总体进度与状态栏。底部显示外部 AI 的
+配置模型和本机接口，但 GUI 启动后不会执行心跳、模型列表查询或“你好”测试。只有实际执行 AI
+功能时才检查服务和模型是否可用，并在不可用时报告错误。
 所有耗时流程通过后台
-CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务。GUI 不保存或展示邮箱授权码、附件密码等秘密值，
-这些信息仍由本地 `common.env` 和专用密码文件提供。详细规范见
+CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务。GUI 不保存或展示邮箱授权码及附件密码；
+`common.env` 只配置附件密码文件路径，实际 ZIP/PDF 密码由该路径对应的专用密码文件提供。详细规范见
 [`docs/GUI_DESIGN_REQUIREMENTS.md`](docs/GUI_DESIGN_REQUIREMENTS.md)。
+
+在 GUI 中获取 126 邮箱账单时，进入“邮件获取账单”页签。界面固定执行完整邮件处理流程；如需扫描邮箱内
+全部历史银行账单，勾选“扫描邮箱全部历史邮件（忽略日期/数量限制）”后执行。全量扫描
+会读取整个邮箱并将匹配邮件、正文和附件写入本机 `raw_data/financial_email/`，耗时取决于邮箱邮件数量。
+“检查起始日期”默认为 `2015-01-01`，起止日期运行前可直接修改；邮箱目录固定使用配置中的 `INBOX`，邮件、
+清单、解压和归一化输出路径均使用配置或 CLI 默认值。主配置文件统一在“全局配置”页选择并重新加载。勾选
+全量历史扫描时日期限制不生效；“跳过密码破解”只跳过外部破解步骤，不影响使用专用密码文件中的密码解压。
 
 ## 环境准备
 
@@ -296,7 +303,7 @@ FINANCIAL_EMAIL_IMAP_PORT=993
 FINANCIAL_EMAIL_IMAP_USER=your-account@126.com
 FINANCIAL_EMAIL_IMAP_PASSWORD=your-126-authorization-code
 FINANCIAL_EMAIL_CLIENT_SUPPORT_EMAIL=support@example.invalid
-FINANCIAL_EMAIL_SINCE=2024-01-01
+FINANCIAL_EMAIL_SINCE=2015-01-01
 FINANCIAL_EMAIL_MAX_MESSAGES=200
 FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动账","入账","扣款","信用卡","借记卡","电子回单","对账单"]
 ```
@@ -309,6 +316,18 @@ FINANCIAL_EMAIL_SUBJECT_KEYWORDS_JSON=["银行","账单","流水","交易","动�
 python flows/financial_email_bot.py --since 2024-01-01 --max-messages 500
 ```
 
+只验证 126 IMAP 登录和邮箱目录选择，不下载邮件：
+
+```powershell
+python flows/financial_email_bot.py --stage check
+```
+
+忽略日期和数量限制，扫描邮箱全部历史邮件：
+
+```powershell
+python flows/financial_email_bot.py --stage ingest --all-history
+```
+
 也可以先解析已经导出的 `.eml` 文件，避免直接连接邮箱：
 
 ```powershell
@@ -319,7 +338,13 @@ python flows/financial_email_bot.py --eml-dir raw_data/email_export
 
 ### 邮件附件密码准备
 
-银行账单 PDF 或 ZIP 附件通常带密码。真实密码放在独立文件 `financial_attachment_passwords.env`，不要放进 `common.env`，也不要提交到版本库。先复制模板：
+银行账单 PDF 或 ZIP 附件通常带密码。根目录下被 Git 忽略的 `common.env` 只配置密码文件路径：
+
+```dotenv
+FINANCIAL_ATTACHMENT_PASSWORD_ENV_FILE=./financial_attachment_passwords.env
+```
+
+实际密码保存在该路径对应且同样被 Git 忽略的 `financial_attachment_passwords.env` 中。先复制模板：
 
 ```powershell
 Copy-Item financial_attachment_passwords.env.example financial_attachment_passwords.env
@@ -365,7 +390,8 @@ raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 ```
 
-日志会记录每个附件的解密/解压结果、密码来源和候选数量，不记录真实密码。
+日志会记录每个附件的解密/解压结果、密码来源和候选数量，不记录真实密码。无法正确解压的 ZIP 或无法读取的
+PDF 会以中文警告显示文件路径、状态和失败原因，并同时写入 `attachment_extract_failures.md`。
 
 ### 历史邮件/PDF 流水整理（对账兼容）
 
@@ -388,9 +414,18 @@ raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 processed_data/normalized/bank_transactions.jsonl
 processed_data/normalized/bank_transactions.json
 processed_data/normalized/bank_transactions_quality_report.md
+processed_data/normalized/bank_transactions_full_review.html
 ```
 
 整理过程会保留金额、方向、账户尾号和来源引用，方便回查邮件、附件、PDF 或 Excel 行。迁移完成后，这些记录应标记为 `reconciliation` 来源，只参与校验，不直接生成权威账本流水。
+
+邮件正文优先使用工商、招商、建设银行专用规则；附件按 PDF、XLS/XLSX、CSV 分派解析。余额、额度、
+本期应还和合计行会在去重前过滤。只有确定性解析器无法识别文档时，才会按
+`financial_document_ai_fallback` 配置调用本地 AI；首次实际调用前检查服务和模型，不执行 GUI 心跳。
+质量报告写入 `bank_transactions_quality_report.md`。
+完整人工审核集写入 `bank_transactions_full_review.html`，包含全部归一化交易的精确金额、未脱敏摘要、
+源数据中能够取得的账户全名和商户全名，并支持机构、日期、方向、金额区间、账户、商户和来源筛选。
+完整审核集含个人财务信息，只能保存在被 Git 忽略的 `processed_data/` 中。
 
 ## 归一化、账本与人工校核
 

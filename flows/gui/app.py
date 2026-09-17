@@ -5,19 +5,24 @@ from __future__ import annotations
 import platform
 import os
 import re
-import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
-from flows.gui.workflows import FieldSpec, WorkflowSpec, build_command, format_command, workflows_for_android_apps
-from flows.modules.ai_service_status import AiServiceStatus, probe_ai_service, status_refresh_seconds
+from flows.gui.workflows import (
+    FieldSpec,
+    WorkflowSpec,
+    build_command,
+    format_command,
+    workflows_for_android_apps,
+)
 from flows.modules.android_capture_config import load_android_app_configs
 from flows.modules.config_loader import get_cloudstation_root, load_config
+from flows.modules.llamacpp_client import LlamaCppConfig, safe_base_url
 
 
 LOG_LINE_LIMIT = 2500
@@ -40,10 +45,15 @@ class WorkflowPanel(ttk.Frame):
 
         form = ttk.LabelFrame(self, text="参数设置", padding=10)
         form.grid(row=1, column=0, sticky="nsew")
-        form.columnconfigure(0, weight=1)
-        form.columnconfigure(1, weight=1)
+        for column in range(spec.form_columns):
+            form.columnconfigure(column, weight=1)
         for index, field in enumerate(spec.fields):
-            self._build_field(form, field, index // 2, index % 2)
+            self._build_field(
+                form,
+                field,
+                index // spec.form_columns,
+                index % spec.form_columns,
+            )
 
         button_row = ttk.Frame(self)
         button_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
@@ -108,7 +118,10 @@ class WorkflowPanel(ttk.Frame):
             self.variables[field.key].set(selected)
 
     def values(self) -> dict[str, str | bool]:
-        return {key: variable.get() for key, variable in self.variables.items()}
+        values = {key: variable.get() for key, variable in self.variables.items()}
+        if self.spec.key == "email":
+            values["config"] = self.app.selected_config_path()
+        return values
 
     def preview(self) -> None:
         self.app.preview_workflow(self)
@@ -134,16 +147,23 @@ class ConfigPanel(ttk.Frame):
         super().__init__(parent, padding=(14, 10))
         self.app = app
         self.columnconfigure(1, weight=1)
+        ttk.Label(self, text="主配置文件", width=20).grid(
+            row=0, column=0, sticky="nw", padx=(0, 8), pady=5
+        )
+        self.config_entry = ttk.Entry(self, textvariable=app.config_path_var)
+        self.config_entry.grid(row=0, column=1, sticky="ew", pady=5)
+        self.browse_button = ttk.Button(self, text="浏览…", command=self.browse_config)
+        self.browse_button.grid(row=0, column=2, padx=(6, 0), pady=5)
+
         rows = (
             ("项目根目录", str(app.project_root)),
-            ("主配置文件", str(app.project_root / "config.yaml")),
             ("本地环境文件", str(app.project_root / "common.env")),
             ("日志目录", str(app.project_root / "logs")),
             ("CloudStation 根目录", str(get_cloudstation_root())),
             ("Python", platform.python_version()),
             ("Tk", str(tk.TkVersion)),
         )
-        for row, (label, value) in enumerate(rows):
+        for row, (label, value) in enumerate(rows, start=1):
             ttk.Label(self, text=label, width=20).grid(row=row, column=0, sticky="nw", padx=(0, 8), pady=5)
             entry = ttk.Entry(self)
             entry.insert(0, value)
@@ -151,35 +171,49 @@ class ConfigPanel(ttk.Frame):
             entry.grid(row=row, column=1, sticky="ew", pady=5)
 
         note = (
-            "界面只读取配置，不在这里保存账号、授权码或附件密码。请在被 Git 忽略的 common.env 和"
-            " financial_attachment_passwords.env 中维护本机秘密信息。"
+            "界面只读取配置，不在这里保存账号、授权码或附件密码。common.env 只配置附件密码文件路径；"
+            "实际 ZIP/PDF 密码保存在该路径对应且被 Git 忽略的专用密码文件中。"
         )
         ttk.Label(self, text=note, style="Hint.TLabel", wraplength=1000).grid(
-            row=len(rows), column=0, columnspan=2, sticky="w", pady=(12, 8)
+            row=len(rows) + 1, column=0, columnspan=3, sticky="w", pady=(12, 8)
         )
         self.reload_button = ttk.Button(
             self,
             text="重新加载并检查配置",
             command=self.check_config,
         )
-        self.reload_button.grid(row=len(rows) + 1, column=1, sticky="e")
+        self.reload_button.grid(row=len(rows) + 2, column=1, columnspan=2, sticky="e")
+
+    def browse_config(self) -> None:
+        selected = filedialog.askopenfilename(
+            parent=self,
+            initialdir=self.app.project_root,
+            filetypes=(("YAML 配置", "*.yaml *.yml"), ("所有文件", "*.*")),
+        )
+        if selected:
+            self.app.config_path_var.set(selected)
 
     def check_config(self) -> None:
         try:
-            config = load_config(self.app.project_root / "config.yaml")
+            config_path = Path(self.app.selected_config_path())
+            config = load_config(config_path)
         except Exception as exc:
             self.app.append_log(f"配置检查失败：{exc}", "error")
             messagebox.showerror("配置检查失败", str(exc), parent=self)
             return
         self.app.config = config
+        self.app.config_path = config_path
+        self.app.config_path_var.set(str(config_path))
         self.app.apply_config_defaults()
-        self.app.refresh_ai_status(test_chat=True)
+        self.app.refresh_ai_configuration_display()
         sections = "、".join(sorted(config))
         self.app.append_log(f"配置检查成功；已加载顶层配置：{sections}", "success")
 
     def set_running(self, running: bool) -> None:
         """Prevent configuration changes while a subprocess is active."""
         self.reload_button.configure(state="disabled" if running else "normal")
+        self.browse_button.configure(state="disabled" if running else "normal")
+        self.config_entry.configure(state="disabled" if running else "normal")
 
 
 class FinancialTrackApp:
@@ -188,34 +222,32 @@ class FinancialTrackApp:
     def __init__(self, root: tk.Tk, project_root: Path) -> None:
         self.root = root
         self.project_root = project_root.resolve()
+        self.config_path = self.project_root / "config.yaml"
         self.runner = TaskRunner()
         self.config = self._load_initial_config()
         self.panels: list[WorkflowPanel] = []
         self.active_panel: WorkflowPanel | None = None
         self.started_at: float | None = None
         self.closing = False
-        self.ai_status_queue: Queue[tuple[AiServiceStatus | None, str]] = Queue()
-        self.ai_checking = False
-        self.last_ai_chat_succeeded: bool | None = None
 
         self.status_var = tk.StringVar(value="就绪")
         self.current_var = tk.StringVar(value="当前对象：—")
         self.elapsed_var = tk.StringVar(value="耗时：00:00:00")
-        self.ai_state_var = tk.StringVar(value="本地 AI：等待检查")
+        self.ai_state_var = tk.StringVar(value="本地 AI：未检测（使用 AI 功能时检查）")
         self.ai_model_var = tk.StringVar(value="模型：—")
         self.ai_endpoint_var = tk.StringVar(value="接口：—")
+        self.config_path_var = tk.StringVar(value=str(self.config_path))
 
         self._configure_window()
         self._build_layout()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
         self.root.after(100, self._poll_events)
         self.root.after(250, self._update_elapsed)
-        self.root.after(50, lambda: self.refresh_ai_status(test_chat=True))
-        self.root.after(status_refresh_seconds(self.config) * 1000, self._auto_refresh_ai_status)
+        self.refresh_ai_configuration_display()
 
     def _load_initial_config(self) -> dict[str, object]:
         try:
-            return load_config(self.project_root / "config.yaml")
+            return load_config(self.config_path)
         except Exception:
             return {}
 
@@ -233,11 +265,15 @@ class FinancialTrackApp:
                 config_key = mapping.get(field.key)
                 if config_key and section.get(config_key) not in {None, ""}:
                     return str(section[config_key])
-        if workflow_key == "attachment" and field.key == "password_env":
-            section = self.config.get("financial_attachments", {})
-            if isinstance(section, dict) and section.get("password_env_file"):
-                return str(section["password_env_file"])
         return field.default
+
+    def selected_config_path(self) -> str:
+        """返回全局配置页选择的绝对配置路径。"""
+        raw_value = self.config_path_var.get().strip()
+        path = Path(raw_value or "config.yaml").expanduser()
+        if not path.is_absolute():
+            path = self.project_root / path
+        return str(path.resolve())
 
     def apply_config_defaults(self) -> None:
         """用户主动重新加载配置时，将安全默认值同步到工作流表单。"""
@@ -255,9 +291,6 @@ class FinancialTrackApp:
         style.configure("Description.TLabel", font=("TkDefaultFont", 10))
         style.configure("Hint.TLabel", foreground="#5f6b7a")
         style.configure("Status.TLabel", padding=(6, 3))
-        style.configure("AiOnline.TLabel", foreground="#14833b", padding=(6, 3))
-        style.configure("AiWarning.TLabel", foreground="#9a6700", padding=(6, 3))
-        style.configure("AiOffline.TLabel", foreground="#b42318", padding=(6, 3))
         style.configure("Accent.TButton", font=("TkDefaultFont", 9, "bold"))
 
     def _build_layout(self) -> None:
@@ -337,97 +370,21 @@ class FinancialTrackApp:
         ttk.Label(ai_status_row, textvariable=self.ai_model_var, style="Status.TLabel").grid(
             row=0, column=1, sticky="w", padx=(12, 0)
         )
-        self.ai_refresh_button = ttk.Button(
-            ai_status_row,
-            text="测试 AI 连接",
-            command=lambda: self.refresh_ai_status(test_chat=True),
-        )
-        self.ai_refresh_button.grid(row=0, column=2, sticky="e")
         ttk.Label(status_area, textvariable=self.ai_endpoint_var, style="Hint.TLabel").grid(
             row=3, column=0, columnspan=4, sticky="w", padx=6, pady=(0, 2)
         )
 
-    def refresh_ai_status(self, test_chat: bool = False) -> None:
-        """在后台读取外部 AI 状态，不阻塞 Tk 主线程。"""
-        if self.ai_checking or self.closing:
-            return
-        self.ai_checking = True
-        self.ai_state_var.set("本地 AI：检查中……")
-        self.ai_refresh_button.configure(state="disabled")
-        config_snapshot = dict(self.config)
-        thread = threading.Thread(
-            target=self._probe_ai_status,
-            args=(config_snapshot, test_chat),
-            daemon=True,
-            name="financial-track-ai-status",
-        )
-        thread.start()
-
-    def _auto_refresh_ai_status(self) -> None:
-        if self.closing:
-            return
-        self.refresh_ai_status()
-        interval_ms = status_refresh_seconds(self.config) * 1000
-        self.root.after(interval_ms, self._auto_refresh_ai_status)
-
-    def _probe_ai_status(self, config: dict[str, object], test_chat: bool) -> None:
-        try:
-            prompt = "你好" if test_chat else None
-            status = probe_ai_service(config, self.project_root, test_prompt=prompt)
-        except Exception as exc:
-            self.ai_status_queue.put((None, f"{type(exc).__name__}: 状态检查失败"))
-            return
-        self.ai_status_queue.put((status, ""))
-
-    def _poll_ai_status(self) -> None:
-        try:
-            while True:
-                status, error = self.ai_status_queue.get_nowait()
-                self.ai_checking = False
-                self.ai_refresh_button.configure(state="normal")
-                if status is None:
-                    self.ai_state_var.set(f"本地 AI：{error}")
-                    self.ai_state_label.configure(style="AiOffline.TLabel")
-                    self.append_log(f"本地 AI {error}", "error")
-                    continue
-                self._apply_ai_status(status)
-        except Empty:
-            pass
-
-    def _apply_ai_status(self, status: AiServiceStatus) -> None:
-        if status.chat_succeeded is not None:
-            self.last_ai_chat_succeeded = status.chat_succeeded
-        chat_verified = self.last_ai_chat_succeeded is True and status.running
-        summary = status.summary
-        if status.chat_succeeded is None and chat_verified:
-            summary = "已启动，最近一次“你好”对话测试正常"
-        self.ai_state_var.set(f"本地 AI：{summary}；健康：{status.health_summary}")
-        if chat_verified or (status.healthy and status.model_available is True):
-            style, tag = "AiOnline.TLabel", "success"
-        elif status.running:
-            style, tag = "AiWarning.TLabel", "warning"
-        else:
-            style, tag = "AiOffline.TLabel", "error"
-        self.ai_state_label.configure(style=style)
-        available = "、".join(status.available_models)
-        if available and status.configured_model not in status.available_models:
-            model_text = f"模型：配置 {status.configured_model}；已加载 {available}"
-        elif available:
-            model_text = f"模型：{status.configured_model}（已加载）"
-        else:
-            model_text = f"模型：{status.configured_model}（来自配置）"
-        self.ai_model_var.set(model_text)
-        self.ai_endpoint_var.set(f"本机接口：{status.base_url}")
-        self.append_log(f"本地 AI 状态：{summary}；{model_text}", tag)
-        if status.chat_succeeded is True:
-            self.append_log("本地 AI 测试发送：你好", "command")
-            self.append_log(f"本地 AI 回复：{status.chat_reply}", "success")
-        elif status.chat_succeeded is False:
-            self.append_log(f"本地 AI“你好”测试失败：{status.chat_error}", "error")
+    def refresh_ai_configuration_display(self) -> None:
+        """显示 AI 配置，但不访问外部服务。"""
+        ai_config = LlamaCppConfig.from_config(self.config, self.project_root)
+        self.ai_state_var.set("本地 AI：未检测（使用 AI 功能时检查）")
+        self.ai_model_var.set(f"模型：{ai_config.model}（来自配置）")
+        self.ai_endpoint_var.set(f"本机接口：{safe_base_url(ai_config.base_url)}")
 
     def preview_workflow(self, panel: WorkflowPanel) -> None:
         try:
-            command = build_command(panel.spec, panel.values(), self.project_root)
+            values = panel.values()
+            command = build_command(panel.spec, values, self.project_root)
         except ValueError as exc:
             messagebox.showerror("参数错误", str(exc), parent=panel)
             return
@@ -438,7 +395,8 @@ class FinancialTrackApp:
             messagebox.showwarning("任务正在运行", "同一时间只能运行一个工作流。", parent=panel)
             return
         try:
-            command = build_command(panel.spec, panel.values(), self.project_root)
+            values = panel.values()
+            command = build_command(panel.spec, values, self.project_root)
         except ValueError as exc:
             self.notebook.select(panel)
             messagebox.showerror("参数错误", str(exc), parent=panel)
@@ -473,7 +431,6 @@ class FinancialTrackApp:
         self.config_panel.set_running(running)
 
     def _poll_events(self) -> None:
-        self._poll_ai_status()
         try:
             while True:
                 self._handle_event(self.runner.events.get_nowait())
