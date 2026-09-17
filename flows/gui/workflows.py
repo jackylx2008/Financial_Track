@@ -123,6 +123,19 @@ def _email(values: Values) -> tuple[str, list[str]]:
     return "financial_email_bot.py", args
 
 
+def _attachment_bruteforce(values: Values) -> tuple[str, list[str]]:
+    args: list[str] = []
+    _add(args, "--config", values.get("config", "config.yaml"))
+    _add(args, "--target", "failed")
+    _add(args, "--mask", "?d?d?d?d?d?d")
+    _add(args, "--candidate-profile", "none")
+    _add(args, "--gpu-only", True)
+    _add(args, "--workload", values.get("workload", "3"))
+    _add(args, "--check-tools", values.get("check_tools", False))
+    _add(args, "--list-targets", values.get("list_targets", False))
+    return "financial_attachment_crack.py", args
+
+
 def _order_capture(values: Values) -> tuple[str, list[str]]:
     mode = str(values["mode"])
     args = [mode]
@@ -235,6 +248,28 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
             FieldSpec("skip_crack", "跳过密码破解", "bool", True),
         ),
         _email,
+        form_columns=2,
+    ),
+    WorkflowSpec(
+        "attachment_bruteforce",
+        "暴力破解邮件附件",
+        (
+            "使用本地显卡和 Hashcat 处理密码错误的 PDF/ZIP 邮件附件；"
+            "密码范围固定为 000000–999999，破解结果写入配置指定的本地密码文件。"
+        ),
+        (
+            FieldSpec(
+                "workload",
+                "GPU 工作负载",
+                "choice",
+                "3",
+                ("1", "2", "3", "4"),
+                help_text="1 最轻，4 最高；默认 3",
+            ),
+            FieldSpec("check_tools", "仅检查 Hashcat/John 工具", "bool", False),
+            FieldSpec("list_targets", "仅列出待破解附件", "bool", False),
+        ),
+        _attachment_bruteforce,
         form_columns=2,
     ),
     WorkflowSpec(

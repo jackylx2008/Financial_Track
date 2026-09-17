@@ -24,7 +24,7 @@ def default_values(workflow_key: str) -> dict[str, str | bool]:
 class WorkflowCommandTests(unittest.TestCase):
     def test_every_workflow_builds_an_existing_entrypoint_from_defaults(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
-        self.assertEqual(len(WORKFLOW_BY_KEY), 8)
+        self.assertEqual(len(WORKFLOW_BY_KEY), 9)
         for key, spec in WORKFLOW_BY_KEY.items():
             with self.subTest(workflow=key):
                 command = build_command(spec, default_values(key), project_root)
@@ -75,6 +75,24 @@ class WorkflowCommandTests(unittest.TestCase):
 
         self.assertEqual(command[command.index("--since") + 1], "2020-02-03")
         self.assertEqual(command[command.index("--before") + 1], "2026-04-05")
+
+    def test_attachment_bruteforce_uses_failed_targets_and_six_digit_gpu_mask(self) -> None:
+        keys = list(WORKFLOW_BY_KEY)
+        self.assertEqual(keys[keys.index("email") + 1], "attachment_bruteforce")
+        values = default_values("attachment_bruteforce")
+        values["config"] = "D:/settings/financial.yaml"
+        command = build_command(
+            WORKFLOW_BY_KEY["attachment_bruteforce"],
+            values,
+            Path("project"),
+        )
+
+        self.assertTrue(command[1].endswith("financial_attachment_crack.py"))
+        self.assertEqual(command[command.index("--target") + 1], "failed")
+        self.assertEqual(command[command.index("--mask") + 1], "?d?d?d?d?d?d")
+        self.assertEqual(command[command.index("--candidate-profile") + 1], "none")
+        self.assertIn("--gpu-only", command)
+        self.assertNotIn("--show-passwords", command)
 
     def test_capture_command_only_emits_mode_specific_limits(self) -> None:
         values = default_values("capture")

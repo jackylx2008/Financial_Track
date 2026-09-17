@@ -401,6 +401,20 @@ raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 无法正确解压的 ZIP 或无法读取的 PDF 不会中断其他附件及后续阶段。流程结束时，失败日志和
 `attachment_extract_failures.md` 只列出附件名称、收件日期和邮件标题，不输出密码、完整路径或复杂的技术错误。
 
+### 使用 GPU 暴力破解邮件附件
+
+GUI 的“暴力破解邮件附件”页紧跟“邮件获取账单”，只读取附件提取清单中密码错误的 PDF/ZIP。执行时固定
+使用 6 位数字掩码 `?d?d?d?d?d?d`（即 `000000`–`999999`），关闭候选密码和 CPU 数字枚举回退，并通过
+Hashcat `-D 2` 限定为本地 GPU 设备。破解结果写回 `FINANCIAL_ATTACHMENT_PASSWORD_ENV_FILE` 指向的
+本地密码文件，日志默认不显示真实密码。
+
+首次使用建议先勾选“仅检查 Hashcat/John 工具”，确认 `common.env` 中配置的 Hashcat、zip2john 和
+pdf2john 路径可用；也可勾选“仅列出待破解附件”核对范围。命令行等价调用为：
+
+```powershell
+python flows/financial_attachment_crack.py --target failed --mask "?d?d?d?d?d?d" --candidate-profile none --gpu-only
+```
+
 ### 历史邮件/PDF 流水整理（对账兼容）
 
 已下载的邮件正文和已成功解密/解压的 PDF、ZIP 内部文件仍可整理为历史兼容中间层，后续用于和安卓截图流水生成差异报告：

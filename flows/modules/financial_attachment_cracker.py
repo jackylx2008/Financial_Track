@@ -66,7 +66,11 @@ def main(description: str | None = None) -> int:
     if not targets:
         print("未找到需要破解的 ZIP/PDF 邮件附件。")
         return 0
-    targets, skipped_saved_count = skip_saved_targets(targets, args.password_env)
+    targets, skipped_saved_count = filter_saved_targets(
+        targets,
+        args.password_env,
+        args.target,
+    )
     if not targets:
         print("没有需要破解的附件。")
         return 0
@@ -113,6 +117,7 @@ def main(description: str | None = None) -> int:
                 pdf_modes=args.pdf_mode,
                 workload=args.workload,
                 keep_hashes=args.keep_hashes,
+                gpu_only=args.gpu_only,
             )
             results.append(result)
             print(format_result(result, show_passwords=args.show_passwords))
@@ -211,6 +216,11 @@ def parse_args(description: str | None = None) -> argparse.Namespace:
     parser.add_argument("--pdf2john", help="pdf2john 可执行文件路径或命令名。")
     parser.add_argument("--workload", default="3", help="hashcat -w 工作负载，默认 3。")
     parser.add_argument(
+        "--gpu-only",
+        action="store_true",
+        help="仅使用 Hashcat GPU 设备，并禁用内置 CPU 数字枚举回退。",
+    )
+    parser.add_argument(
         "--list-targets",
         action="store_true",
         help="只列出会处理的附件，不调用 hashcat。",
@@ -245,6 +255,13 @@ def apply_config_defaults(args: argparse.Namespace) -> None:
     section = config.get("financial_attachment_cracker", {})
     if not isinstance(section, dict):
         section = {}
+    attachment_section = config.get("financial_attachments", {})
+    if not isinstance(attachment_section, dict):
+        attachment_section = {}
+    if args.password_env == DEFAULT_PASSWORD_ENV:
+        configured_password_env = attachment_section.get("password_env_file")
+        if configured_password_env:
+            args.password_env = Path(str(configured_password_env))
 
     args.manifest = resolve_runtime_path(args.manifest)
     args.inventory = resolve_runtime_path(args.inventory)
@@ -308,14 +325,15 @@ def load_targets(args: argparse.Namespace) -> list[CrackTarget]:
         return [target_from_path(path) for path in args.attachment]
 
     targets: list[CrackTarget] = []
-    if args.target == "failed" and args.manifest.exists():
+    if args.target == "failed":
+        if not args.manifest.exists():
+            return []
         targets = [
             target_from_item(item)
             for item in read_json_list(args.manifest)
             if item.get("status") == "password_failed"
             and extension_kind(Path(str(item.get("path", "")))) in {"zip", "pdf"}
         ]
-    if targets:
         return dedupe_targets(targets)
 
     if args.inventory.exists():
@@ -351,6 +369,17 @@ def skip_saved_targets(
     return kept, skipped
 
 
+def filter_saved_targets(
+    targets: list[CrackTarget],
+    password_env: Path,
+    target_mode: str,
+) -> tuple[list[CrackTarget], int]:
+    if target_mode == "failed":
+        # 最新提取清单已证明现有密码无效，不能再因旧的按文件名记录跳过。
+        return targets, 0
+    return skip_saved_targets(targets, password_env)
+
+
 def saved_attachment_filenames(password_env: Path) -> set[str]:
     values = read_env_assignments(password_env)
     by_filename = parse_json_object(
@@ -379,6 +408,7 @@ def crack_target(
     pdf_modes: list[int],
     workload: str,
     keep_hashes: bool,
+    gpu_only: bool = False,
 ) -> CrackResult:
     if not target.path.exists():
         return CrackResult(target=target, status="error", reason="附件文件不存在")
@@ -395,7 +425,7 @@ def crack_target(
                 mask="candidate",
             )
 
-    direct_zip_result = crack_traditional_zip_numeric_masks(target, masks)
+    direct_zip_result = None if gpu_only else crack_traditional_zip_numeric_masks(target, masks)
     if direct_zip_result is not None:
         password, mask = direct_zip_result
         return CrackResult(
@@ -418,7 +448,7 @@ def crack_target(
     try:
         hash_string = extract_hash(john_tool, target.path, target.kind)
     except RuntimeError as exc:
-        direct_pdf_result = crack_pdf_numeric_masks(target, masks)
+        direct_pdf_result = None if gpu_only else crack_pdf_numeric_masks(target, masks)
         if direct_pdf_result is not None:
             password, mask = direct_pdf_result
             return CrackResult(
@@ -439,7 +469,15 @@ def crack_target(
     effective_wordlists = [path for path in [generated_wordlist, *wordlists] if path and path.exists()]
     for mode in modes:
         for wordlist in effective_wordlists:
-            run_hashcat_wordlist(hashcat=hashcat, hash_file=hash_file, mode=mode, wordlist=wordlist, workload=workload, extra_args=hashcat_extra_args)
+            run_hashcat_wordlist(
+                hashcat=hashcat,
+                hash_file=hash_file,
+                mode=mode,
+                wordlist=wordlist,
+                workload=workload,
+                extra_args=hashcat_extra_args,
+                gpu_only=gpu_only,
+            )
             password = show_hashcat_password(hashcat=hashcat, hash_string=hash_string, hash_file=hash_file, mode=mode, extra_args=hashcat_extra_args)
             if password is not None and verify_password(target, password):
                 kept_hash = keep_hash(hash_file, target) if keep_hashes else None
@@ -462,6 +500,7 @@ def crack_target(
                 mask=mask,
                 workload=workload,
                 extra_args=hashcat_extra_args,
+                gpu_only=gpu_only,
             )
             password = show_hashcat_password(hashcat=hashcat, hash_string=hash_string, hash_file=hash_file, mode=mode, extra_args=hashcat_extra_args)
             if password is not None and verify_password(target, password):
@@ -737,11 +776,18 @@ def is_aes_zip(path: Path) -> bool:
 
 
 def run_hashcat(
-    hashcat: Path, hash_file: Path, mode: int, mask: str, workload: str, extra_args: list[str]
+    hashcat: Path,
+    hash_file: Path,
+    mode: int,
+    mask: str,
+    workload: str,
+    extra_args: list[str],
+    gpu_only: bool = False,
 ) -> None:
     cmd = [
         str(hashcat),
         *extra_args,
+        *(["-D", "2"] if gpu_only else []),
         "-m",
         str(mode),
         "-a",
@@ -757,10 +803,19 @@ def run_hashcat(
     subprocess.run(cmd, cwd=hashcat.parent, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, text=True)
 
 
-def run_hashcat_wordlist(hashcat: Path, hash_file: Path, mode: int, wordlist: Path, workload: str, extra_args: list[str]) -> None:
+def run_hashcat_wordlist(
+    hashcat: Path,
+    hash_file: Path,
+    mode: int,
+    wordlist: Path,
+    workload: str,
+    extra_args: list[str],
+    gpu_only: bool = False,
+) -> None:
     cmd = [
         str(hashcat),
         *extra_args,
+        *(["-D", "2"] if gpu_only else []),
         "-m",
         str(mode),
         "-a",

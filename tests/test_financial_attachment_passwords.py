@@ -8,6 +8,15 @@ from unittest.mock import patch
 
 from flows.context import AppContext
 from flows.financial_email_bot import _log_pipeline_failure_summary, run_crack_stage
+from flows.modules.financial_attachment_cracker import (
+    DEFAULT_PASSWORD_ENV,
+    PROJECT_ROOT,
+    CrackTarget,
+    apply_config_defaults,
+    filter_saved_targets,
+    load_targets,
+    run_hashcat,
+)
 from flows.modules.financial_attachment_passwords import AttachmentPasswordStore
 from flows.workflows.financial_attachment_extract import (
     _build_failures_markdown,
@@ -18,6 +27,93 @@ from flows.workflows.financial_attachment_extract import (
 
 
 class AttachmentPasswordStoreTests(unittest.TestCase):
+    def test_failed_mode_does_not_fall_back_to_successful_encrypted_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "manifest.json"
+            inventory = root / "inventory.json"
+            manifest.write_text(
+                '[{"path":"done.pdf","kind":"pdf","status":"success"}]',
+                encoding="utf-8",
+            )
+            inventory.write_text(
+                '[{"path":"done.pdf","kind":"pdf","encrypted_status":"encrypted"}]',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                attachment=None,
+                target="failed",
+                manifest=manifest,
+                inventory=inventory,
+            )
+
+            targets = load_targets(args)
+
+        self.assertEqual(targets, [])
+
+    def test_failed_target_is_not_skipped_by_stale_saved_password(self) -> None:
+        target = CrackTarget(
+            path=Path("statement.pdf"),
+            kind="pdf",
+            filename="statement.pdf",
+            bank_key="example",
+            subject="示例账单",
+            sent_at="2026-09-17",
+            status="password_failed",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            password_env = Path(directory) / "passwords.env"
+            password_env.write_text(
+                'FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON={"statement.pdf":"wrong"}',
+                encoding="utf-8",
+            )
+            targets, skipped = filter_saved_targets([target], password_env, "failed")
+
+        self.assertEqual(targets, [target])
+        self.assertEqual(skipped, 0)
+
+    def test_cracker_uses_password_file_path_from_project_config(self) -> None:
+        args = Namespace(
+            config=Path("config.yaml"),
+            manifest=Path("manifest.json"),
+            inventory=Path("inventory.json"),
+            output=Path("result.env"),
+            password_env=DEFAULT_PASSWORD_ENV,
+            wordlist=[],
+            attachment=None,
+            hashcat=None,
+            zip2john=None,
+            pdf2john=None,
+            hashcat_extra_arg=[],
+        )
+        config = {
+            "financial_attachments": {"password_env_file": "private/passwords.env"},
+            "financial_attachment_cracker": {},
+        }
+        with patch(
+            "flows.modules.financial_attachment_cracker.load_project_config",
+            return_value=config,
+        ):
+            apply_config_defaults(args)
+
+        self.assertEqual(args.password_env, PROJECT_ROOT / "private/passwords.env")
+
+    def test_hashcat_gpu_only_uses_gpu_device_type_and_six_digit_mask(self) -> None:
+        with patch("flows.modules.financial_attachment_cracker.subprocess.run") as subprocess_run:
+            run_hashcat(
+                hashcat=Path("hashcat.exe"),
+                hash_file=Path("example.hash"),
+                mode=13600,
+                mask="?d?d?d?d?d?d",
+                workload="3",
+                extra_args=[],
+                gpu_only=True,
+            )
+
+        command = subprocess_run.call_args.args[0]
+        self.assertEqual(command[command.index("-D") + 1], "2")
+        self.assertEqual(command[-1], "?d?d?d?d?d?d")
+
     def test_passwords_are_loaded_from_configured_password_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             env_path = Path(directory) / "passwords.env"

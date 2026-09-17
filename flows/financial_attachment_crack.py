@@ -13,6 +13,7 @@
 示例：
   python flows/financial_attachment_crack.py --check-tools
   python flows/financial_attachment_crack.py --target encrypted
+  python flows/financial_attachment_crack.py --target failed --mask ?d?d?d?d?d?d --candidate-profile none --gpu-only
 
 输出：
   破解结果仅写入被 Git 忽略的本地密码文件和 ``raw_data/``；默认不在控制台显示真实密码。

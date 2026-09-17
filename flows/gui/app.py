@@ -123,7 +123,7 @@ class WorkflowPanel(ttk.Frame):
 
     def values(self) -> dict[str, str | bool]:
         values = {key: variable.get() for key, variable in self.variables.items()}
-        if self.spec.key == "email":
+        if self.spec.key in {"email", "attachment_bruteforce"}:
             values["config"] = self.app.selected_config_path()
         return values
 
