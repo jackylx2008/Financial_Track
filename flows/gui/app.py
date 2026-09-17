@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import platform
 import os
 import re
@@ -23,10 +24,12 @@ from flows.gui.workflows import (
 from flows.modules.android_capture_config import load_android_app_configs
 from flows.modules.config_loader import get_cloudstation_root, load_config
 from flows.modules.llamacpp_client import LlamaCppConfig, safe_base_url
+from logging_config import setup_logger
 
 
 LOG_LINE_LIMIT = 2500
 PROGRESS_PATTERN = re.compile(r"(?:\[)?(\d+)\s*/\s*(\d+)")
+logger = logging.getLogger(__name__)
 
 
 class WorkflowPanel(ttk.Frame):
@@ -40,7 +43,8 @@ class WorkflowPanel(ttk.Frame):
         self.input_widgets: list[tk.Widget] = []
 
         self.columnconfigure(0, weight=1)
-        description = ttk.Label(self, text=spec.description, style="Description.TLabel", wraplength=1100)
+        description_style = "EmailDescription.TLabel" if spec.key == "email" else "Description.TLabel"
+        description = ttk.Label(self, text=spec.description, style=description_style, wraplength=1100)
         description.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
         form = ttk.LabelFrame(self, text="参数设置", padding=10)
@@ -60,7 +64,7 @@ class WorkflowPanel(ttk.Frame):
         button_row.columnconfigure(0, weight=1)
         self.preview_button = ttk.Button(button_row, text="参数预览", command=self.preview)
         self.preview_button.grid(row=0, column=1, padx=(0, 8))
-        self.start_button = ttk.Button(button_row, text="开始执行", style="Accent.TButton", command=self.start)
+        self.start_button = ttk.Button(button_row, text="开始执行", command=self.start)
         self.start_button.grid(row=0, column=2, padx=(0, 8))
         self.cancel_button = ttk.Button(button_row, text="取消任务", command=self.app.cancel_task, state="disabled")
         self.cancel_button.grid(row=0, column=3)
@@ -289,9 +293,10 @@ class FinancialTrackApp:
         self.root.minsize(1080, 720)
         style = ttk.Style(self.root)
         style.configure("Description.TLabel", font=("TkDefaultFont", 10))
+        # 不固定前景色，让 macOS 的浅色/深色系统主题选择可读颜色。
+        style.configure("EmailDescription.TLabel", font=("TkDefaultFont", 13, "bold"))
         style.configure("Hint.TLabel", foreground="#5f6b7a")
         style.configure("Status.TLabel", padding=(6, 3))
-        style.configure("Accent.TButton", font=("TkDefaultFont", 9, "bold"))
 
     def _build_layout(self) -> None:
         self.root.columnconfigure(0, weight=1)
@@ -329,7 +334,7 @@ class FinancialTrackApp:
             height=14,
             wrap="word",
             state="disabled",
-            font=("TkFixedFont", 9),
+            font=("TkFixedFont", 10),
             background="#111827",
             foreground="#e5e7eb",
             insertbackground="#e5e7eb",
@@ -492,6 +497,11 @@ class FinancialTrackApp:
         self.root.after(250, self._update_elapsed)
 
     def append_log(self, message: str, tag: str = "info") -> None:
+        log_method = {
+            "warning": logger.warning,
+            "error": logger.error,
+        }.get(tag, logger.info)
+        log_method("GUI %s", message)
         timestamp = time.strftime("%H:%M:%S")
         self.log_text.configure(state="normal")
         self.log_text.insert("end", f"{timestamp}  {message}\n", tag)
@@ -543,6 +553,17 @@ class FinancialTrackApp:
 
 
 def run(project_root: Path) -> int:
+    log_level = "INFO"
+    try:
+        config = load_config(project_root / "config.yaml")
+        app_config = config.get("app", {})
+        if isinstance(app_config, dict):
+            log_level = str(app_config.get("log_level", log_level))
+    except Exception:
+        # GUI 中仍会显示配置读取问题；日志初始化本身不应阻止窗口启动。
+        pass
+    setup_logger(log_level=log_level, entry_name="main", log_dir=project_root / "logs")
+    logger.info("Starting Financial Track GUI; log_dir=%s", project_root / "logs")
     root = tk.Tk()
     FinancialTrackApp(root, project_root)
     root.mainloop()

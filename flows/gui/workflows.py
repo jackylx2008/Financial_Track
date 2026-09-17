@@ -213,7 +213,10 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
     WorkflowSpec(
         "email",
         "邮件获取账单",
-        "从邮箱获取账单邮件，并按默认目录准备、解密、提取和归一化附件。",
+        (
+            "从邮箱检查邮件和附件，初步判断是否与财务有关；仅将财务相关邮件、正文和附件下载到 "
+            "raw_data/financial_email/，同时生成包含本次全部邮件条目的 HTML，供人工审核判断结果。"
+        ),
         (
             FieldSpec(
                 "since",

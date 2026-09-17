@@ -52,7 +52,10 @@ def _extract_zip(path: Path, output_dir: Path, passwords: list[str]) -> dict[str
             return {"status": "success", "reason": f"zip extracted with candidate #{index}", "output_files": output_files}
         except RuntimeError as exc:
             last_error = str(exc)
-        except (zipfile.BadZipFile, NotImplementedError) as exc:
+        except NotImplementedError as exc:
+            # 标准库不支持 WinZip AES 时继续交给 pyzipper，不能提前结束整批任务。
+            last_error = str(exc)
+        except zipfile.BadZipFile as exc:
             last_error = str(exc)
             break
 

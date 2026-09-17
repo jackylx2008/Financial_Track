@@ -26,9 +26,24 @@ def run(ctx: AppContext, inventory_path: str | Path, password_env_path: str | Pa
     inventory = _read_inventory(inventory_file)
     results: list[dict[str, Any]] = []
     for index, item in enumerate(inventory, start=1):
-        result = extract_attachment(item=item, password_store=password_store, output_root=output_path)
+        try:
+            result = extract_attachment(item=item, password_store=password_store, output_root=output_path)
+        except Exception as exc:
+            path = str(item.get("path", ""))
+            result = {
+                **item,
+                "path": path,
+                "filename": Path(path).name,
+                "kind": str(item.get("kind", Path(path).suffix.lower().lstrip("."))),
+                "status": "error",
+                "reason": _short_error(exc),
+                "output_files": [],
+                "password_source": "",
+                "password_candidate_count": 0,
+            }
         results.append(result)
-        _log_extraction_result(index, len(inventory), result)
+        if result["status"] == "success":
+            _log_extraction_result(index, len(inventory), result)
 
     manifest_path = output_path / "attachment_extract_manifest.json"
     failures_path = output_path / "attachment_extract_failures.md"
@@ -41,11 +56,36 @@ def run(ctx: AppContext, inventory_path: str | Path, password_env_path: str | Pa
         "attachments": len(results),
         "success": sum(1 for item in results if item["status"] == "success"),
         "failed": sum(1 for item in results if item["status"] != "success"),
+        "failed_attachments": [
+            _failure_display_fields(item)
+            for item in results
+            if item["status"] != "success"
+        ],
         "manifest_json": str(manifest_path),
         "failures_markdown": str(failures_path),
     }
     logger.info("Finished financial attachment extraction: %s", summary)
     return summary
+
+
+def _log_extraction_failures(results: list[dict[str, Any]], failures_path: Path) -> None:
+    failed = [item for item in results if item["status"] != "success"]
+    if not failed:
+        return
+    del failures_path  # 失败日志只展示人工审核需要的三个字段。
+    for item in failed:
+        fields = _failure_display_fields(item)
+        logger.warning(
+            "附件名称=%s；收件日期=%s；邮件标题=%s",
+            fields["attachment_name"],
+            fields["received_at"],
+            fields["subject"],
+        )
+
+
+def _short_error(exc: Exception, limit: int = 240) -> str:
+    message = " ".join(str(exc).split()) or type(exc).__name__
+    return message if len(message) <= limit else message[: limit - 3] + "..."
 
 
 def _log_extraction_result(index: int, total: int, result: dict[str, Any]) -> None:
@@ -62,14 +102,12 @@ def _log_extraction_result(index: int, total: int, result: dict[str, Any]) -> No
             result["path"],
         )
         return
+    fields = _failure_display_fields(result)
     logger.warning(
-        "邮件附件处理失败 %s/%s：类型=%s 状态=%s 文件=%s 原因=%s",
-        index,
-        total,
-        result.get("kind", ""),
-        result["status"],
-        result["path"],
-        result.get("reason", ""),
+        "附件名称=%s；收件日期=%s；邮件标题=%s",
+        fields["attachment_name"],
+        fields["received_at"],
+        fields["subject"],
     )
 
 
@@ -84,31 +122,39 @@ def _read_inventory(path: Path) -> list[dict[str, Any]]:
 
 def _build_failures_markdown(results: list[dict[str, Any]]) -> str:
     failed = [item for item in results if item["status"] != "success"]
-    lines = [
-        "# 邮件附件解密/解压失败清单",
-        "",
-        f"- 附件总数：{len(results)}",
-        f"- 成功数：{sum(1 for item in results if item['status'] == 'success')}",
-        f"- 失败数：{len(failed)}",
-        "",
-    ]
+    lines = ["# 邮件附件解密/解压失败清单", ""]
     if not failed:
         lines.append("暂无失败附件。")
         return "\n".join(lines) + "\n"
 
-    lines.extend(["## 失败详情", ""])
+    lines.extend(
+        [
+            "| 附件名称 | 收件日期 | 邮件标题 |",
+            "| --- | --- | --- |",
+        ]
+    )
     for item in failed:
-        lines.extend(
-            [
-                f"- 文件：`{item['path']}`",
-                f"  - 状态：`{item['status']}`",
-                f"  - 原因：{item.get('reason', '')}",
-                f"  - 银行：{item.get('bank_key', '')}",
-                f"  - 邮件标题：{item.get('subject', '')}",
-                f"  - 邮件日期：{item.get('sent_at', '')}",
-                f"  - Message UID：{item.get('message_uid', '')}",
-                f"  - 密码来源：{item.get('password_source', '')}",
-                f"  - 候选密码数：{item.get('password_candidate_count', 0)}",
-            ]
+        fields = _failure_display_fields(item)
+        lines.append(
+            "| {attachment_name} | {received_at} | {subject} |".format(
+                **{key: _escape_markdown_table(value) for key, value in fields.items()}
+            )
         )
     return "\n".join(lines) + "\n"
+
+
+def _failure_display_fields(item: dict[str, Any]) -> dict[str, str]:
+    path = Path(str(item.get("path", "")))
+    return {
+        "attachment_name": _one_line(str(item.get("filename") or path.name or "—")),
+        "received_at": _one_line(str(item.get("sent_at") or "—")),
+        "subject": _one_line(str(item.get("subject") or "—")),
+    }
+
+
+def _one_line(value: str) -> str:
+    return " ".join(value.split()) or "—"
+
+
+def _escape_markdown_table(value: str) -> str:
+    return value.replace("|", "\\|")

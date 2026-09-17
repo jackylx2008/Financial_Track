@@ -34,6 +34,8 @@ class WorkflowCommandTests(unittest.TestCase):
     def test_email_page_is_compact_and_runs_complete_pipeline(self) -> None:
         spec = WORKFLOW_BY_KEY["email"]
         self.assertEqual(spec.title, "邮件获取账单")
+        self.assertIn("全部邮件条目", spec.description)
+        self.assertIn("raw_data/financial_email/", spec.description)
         self.assertEqual(
             [field.key for field in spec.fields],
             [

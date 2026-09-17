@@ -29,6 +29,7 @@ PARTIAL_DATETIME_RE = re.compile(
 )
 OUTFLOW_KEYWORDS = ("支出", "消费", "付款", "扣款", "转出", "还款", "支付")
 INFLOW_KEYWORDS = ("收入", "入账", "退款", "转入", "存入", "收款")
+FINANCIAL_ATTACHMENT_KEYWORDS = ("账单", "流水", "对账", "交易", "明细", "statement", "invoice", "receipt")
 
 
 class FinancialEmailParser:
@@ -39,6 +40,15 @@ class FinancialEmailParser:
         self.attachment_dir = config.output_dir / "attachments"
 
     def parse_and_save(self, raw_message: dict[str, Any], index: int) -> dict[str, Any] | None:
+        record, _audit_entry = self.parse_and_save_with_audit(raw_message, index)
+        return record
+
+    def parse_and_save_with_audit(
+        self,
+        raw_message: dict[str, Any],
+        index: int,
+    ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
+        """初判邮件并返回记录与审核条目；非财务邮件不写入本地。"""
         raw_bytes = raw_message["raw_bytes"]
         msg = message_from_bytes(raw_bytes, policy=default)
         if not isinstance(msg, EmailMessage):
@@ -47,9 +57,34 @@ class FinancialEmailParser:
 
         metadata = _extract_metadata(msg)
         body_text = _extract_body_text(msg)
-        matched_rule = _match_rule(self.config.rules, self.config.subject_keywords, metadata, body_text)
+        attachment_names = [
+            _sanitize_header_value(part.get_filename() or f"attachment_{part_index}")
+            for part_index, part in enumerate(_iter_attachment_parts(msg), start=1)
+        ]
+        matched_rule = _match_rule(
+            self.config.rules,
+            self.config.subject_keywords,
+            metadata,
+            body_text,
+            attachment_names,
+        )
+        audit_entry = {
+            "index": index,
+            "message_uid": str(raw_message.get("uid", "")),
+            "message_id": metadata["message_id"],
+            "sent_at": metadata["sent_at"],
+            "from": metadata["from"],
+            "to": metadata["to"],
+            "subject": metadata["subject"],
+            "is_financial": matched_rule is not None,
+            "classification_reason": _classification_reason(matched_rule),
+            "attachment_names": attachment_names,
+            "saved_files": [],
+            "status": "financial" if matched_rule is not None else "not_financial",
+            "error": "",
+        }
         if matched_rule is None:
-            return None
+            return None, audit_entry
 
         stem = _build_stem(raw_message.get("uid"), metadata, raw_bytes, index)
         source_file = self._save_eml(stem, raw_bytes) if self.config.save_eml else raw_message.get("source_path")
@@ -78,7 +113,13 @@ class FinancialEmailParser:
         }
         if not record["candidate_transactions"]:
             record["warnings"].append("no_candidate_transaction_found")
-        return record
+        audit_entry["saved_files"] = [
+            str(value)
+            for value in (source_file, body_file, *attachment_files)
+            if value
+        ]
+        audit_entry["status"] = "downloaded"
+        return record, audit_entry
 
     def _save_eml(self, stem: str, raw_bytes: bytes) -> str:
         self.eml_dir.mkdir(parents=True, exist_ok=True)
@@ -201,6 +242,7 @@ def _match_rule(
     subject_keywords: list[str],
     metadata: dict[str, Any],
     body_text: str,
+    attachment_names: list[str] | None = None,
 ) -> dict[str, Any] | None:
     sender = metadata["from"].lower()
     subject = metadata["subject"].lower()
@@ -218,11 +260,30 @@ def _match_rule(
             "subject_keywords": subject_keywords,
             "match_type": "subject_keyword",
         }
+    attachment_text = " ".join(attachment_names or []).lower()
+    if _contains_any(attachment_text, list(FINANCIAL_ATTACHMENT_KEYWORDS)):
+        return {
+            "bank_key": "attachment_keyword",
+            "bank_name": "",
+            "attachment_keywords": list(FINANCIAL_ATTACHMENT_KEYWORDS),
+            "match_type": "attachment_keyword",
+        }
     return None
 
 
 def _contains_any(value: str, needles: list[str]) -> bool:
     return any(str(needle).lower() in value for needle in needles)
+
+
+def _classification_reason(matched_rule: dict[str, Any] | None) -> str:
+    if matched_rule is None:
+        return "未命中财务发件人、主题或正文规则"
+    if matched_rule.get("match_type") == "subject_keyword":
+        return "主题命中财务关键词"
+    if matched_rule.get("match_type") == "attachment_keyword":
+        return "附件名称命中财务关键词"
+    bank_name = str(matched_rule.get("bank_name") or matched_rule.get("bank_key") or "财务规则")
+    return f"命中机构规则：{bank_name}"
 
 
 def _iter_attachment_parts(msg: EmailMessage) -> list[Message]:

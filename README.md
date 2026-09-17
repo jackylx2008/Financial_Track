@@ -85,7 +85,9 @@ CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务
 
 在 GUI 中获取 126 邮箱账单时，进入“邮件获取账单”页签。界面固定执行完整邮件处理流程；如需扫描邮箱内
 全部历史银行账单，勾选“扫描邮箱全部历史邮件（忽略日期/数量限制）”后执行。全量扫描
-会读取整个邮箱并将匹配邮件、正文和附件写入本机 `raw_data/financial_email/`，耗时取决于邮箱邮件数量。
+会读取整个邮箱，按发件人、主题、正文和附件名称初步判断财务相关性，并仅将匹配邮件、正文和附件写入
+本机 `raw_data/financial_email/`，耗时取决于邮箱邮件数量。无论初判是否匹配，本次检查范围内的全部邮件
+都会列入 `raw_data/financial_email/financial_email_review.html`，用于人工审核误判和漏判。
 “检查起始日期”默认为 `2015-01-01`，起止日期运行前可直接修改；邮箱目录固定使用配置中的 `INBOX`，邮件、
 清单、解压和归一化输出路径均使用配置或 CLI 默认值。主配置文件统一在“全局配置”页选择并重新加载。勾选
 全量历史扫描时日期限制不生效；“跳过密码破解”只跳过外部破解步骤，不影响使用专用密码文件中的密码解压。
@@ -126,12 +128,16 @@ CLOUDSTATION_ROOT_LINUX=~/CloudStation
 统一日志配置仅位于项目根目录 `logging_config.py`。默认日志写入项目根目录 `logs/`，不会写入 `flows/logs/`。日志文件名通常对应入口脚本名，例如：
 
 ```text
+logs/main.log
 logs/ai_self_check.log
 logs/order_image_ai.log
 logs/financial_email_bot.log
 logs/android_capture_macos.log
 logs/android_capture_windows.log
 ```
+
+GUI 启动后会创建 `logs/main.log`，界面“运行日志与实时输出”中显示的工作流输出也会同步写入该文件；
+各 CLI 子进程仍保留自己的入口日志，例如邮件流程写入 `logs/financial_email_bot.log`。
 
 `common.env`、`financial_attachment_passwords.env`、`raw_data/`、`processed_data/`、`logs/`、`vendor/` 等本地文件或运行产物不应提交到 git。
 
@@ -293,6 +299,8 @@ raw_data/financial_email/attachments/          # 邮件附件
 raw_data/financial_email/financial_email_records.jsonl
 raw_data/financial_email/financial_email_records.json
 raw_data/financial_email/financial_email_summary.md
+raw_data/financial_email/financial_email_review.json     # 本次检查的全部邮件条目
+raw_data/financial_email/financial_email_review.html     # 可搜索、可筛选的人工审核页
 ```
 
 先在 `common.env` 中配置邮箱 IMAP 信息。网易 126 邮箱使用 `imap.126.com:993`，密码应填写客户端授权码，不要使用网页登录密码：
@@ -334,7 +342,7 @@ python flows/financial_email_bot.py --stage ingest --all-history
 python flows/financial_email_bot.py --eml-dir raw_data/email_export
 ```
 
-当前邮件解析会按 `config.yaml` 中的规则匹配账单邮件并保存 PDF 等附件，也会保留历史候选交易提取能力。这些产物定位为校验对账材料，不再作为新增流水的权威来源。
+当前邮件解析会根据发件人、主题、正文以及附件名称初步判断财务相关性。只有财务相关邮件会保存 EML、正文和附件；全部受检邮件的日期、发件人、主题、附件、判断依据和保存状态都会进入同目录 HTML 供人工复核。这些产物定位为校验对账材料，不再作为新增流水的权威来源。
 
 ### 邮件附件密码准备
 
@@ -390,8 +398,8 @@ raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 ```
 
-日志会记录每个附件的解密/解压结果、密码来源和候选数量，不记录真实密码。无法正确解压的 ZIP 或无法读取的
-PDF 会以中文警告显示文件路径、状态和失败原因，并同时写入 `attachment_extract_failures.md`。
+无法正确解压的 ZIP 或无法读取的 PDF 不会中断其他附件及后续阶段。流程结束时，失败日志和
+`attachment_extract_failures.md` 只列出附件名称、收件日期和邮件标题，不输出密码、完整路径或复杂的技术错误。
 
 ### 历史邮件/PDF 流水整理（对账兼容）
 

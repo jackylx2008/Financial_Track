@@ -11,6 +11,7 @@ from flows.context import AppContext
 from flows.modules.financial_email_config import FinancialEmailConfig
 from flows.modules.financial_email_imap import FinancialEmailImapClient
 from flows.modules.financial_email_parser import FinancialEmailParser
+from flows.modules.financial_email_review_html import write_email_review_html, write_email_review_json
 
 
 logger = logging.getLogger(__name__)
@@ -28,6 +29,7 @@ def run(ctx: AppContext, config: FinancialEmailConfig) -> dict[str, Any]:
     raw_messages = _read_local_eml_files(config) if config.eml_dir else _fetch_imap_messages(config)
 
     records: list[dict[str, Any]] = []
+    review_entries: list[dict[str, Any]] = []
     skipped = 0
     failed: list[dict[str, str]] = []
     started_at = time.monotonic()
@@ -36,10 +38,28 @@ def run(ctx: AppContext, config: FinancialEmailConfig) -> dict[str, Any]:
     for index, raw_message in enumerate(raw_messages, start=1):
         parse_failed = False
         try:
-            record = parser.parse_and_save(raw_message=raw_message, index=index)
-        except Exception:
+            record, review_entry = parser.parse_and_save_with_audit(raw_message=raw_message, index=index)
+            review_entries.append(review_entry)
+        except Exception as exc:
             logger.exception("Failed parsing financial email message index=%s uid=%s", index, raw_message.get("uid"))
             failed.append({"index": str(index), "uid": str(raw_message.get("uid", ""))})
+            review_entries.append(
+                {
+                    "index": index,
+                    "message_uid": str(raw_message.get("uid", "")),
+                    "message_id": "",
+                    "sent_at": "",
+                    "from": "",
+                    "to": "",
+                    "subject": "",
+                    "is_financial": False,
+                    "classification_reason": "邮件解析失败，需人工检查",
+                    "attachment_names": [],
+                    "saved_files": [],
+                    "status": "error",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
             record = None
             parse_failed = True
         if record is None and not parse_failed:
@@ -59,7 +79,7 @@ def run(ctx: AppContext, config: FinancialEmailConfig) -> dict[str, Any]:
                 now - started_at,
             )
 
-    paths = _write_outputs(output_dir, records, skipped, failed)
+    paths = _write_outputs(output_dir, records, review_entries, skipped, failed)
     summary = {
         "output_dir": str(output_dir),
         "messages_seen": len(raw_messages),
@@ -71,6 +91,8 @@ def run(ctx: AppContext, config: FinancialEmailConfig) -> dict[str, Any]:
         "records_jsonl": str(paths["jsonl"]),
         "records_json": str(paths["json"]),
         "summary_markdown": str(paths["summary"]),
+        "email_review_json": str(paths["review_json"]),
+        "email_review_html": str(paths["review_html"]),
     }
     logger.info("Finished financial email ingest: %s", summary)
     return summary
@@ -111,10 +133,18 @@ def _read_local_eml_files(config: FinancialEmailConfig) -> list[dict[str, Any]]:
     ]
 
 
-def _write_outputs(output_dir: Path, records: list[dict[str, Any]], skipped: int, failed: list[dict[str, str]]) -> dict[str, Path]:
+def _write_outputs(
+    output_dir: Path,
+    records: list[dict[str, Any]],
+    review_entries: list[dict[str, Any]],
+    skipped: int,
+    failed: list[dict[str, str]],
+) -> dict[str, Path]:
     jsonl_path = output_dir / "financial_email_records.jsonl"
     json_path = output_dir / "financial_email_records.json"
     summary_path = output_dir / "financial_email_summary.md"
+    review_json_path = output_dir / "financial_email_review.json"
+    review_html_path = output_dir / "financial_email_review.html"
 
     with jsonl_path.open("w", encoding="utf-8") as file:
         for record in records:
@@ -123,7 +153,16 @@ def _write_outputs(output_dir: Path, records: list[dict[str, Any]], skipped: int
 
     json_path.write_text(json.dumps(_sanitize_json_value(records), ensure_ascii=False, indent=2), encoding="utf-8")
     summary_path.write_text(_sanitize_json_value(_build_summary_markdown(records, skipped, failed)), encoding="utf-8")
-    return {"jsonl": jsonl_path, "json": json_path, "summary": summary_path}
+    sanitized_entries = _sanitize_json_value(review_entries)
+    write_email_review_json(sanitized_entries, review_json_path)
+    write_email_review_html(sanitized_entries, review_html_path)
+    return {
+        "jsonl": jsonl_path,
+        "json": json_path,
+        "summary": summary_path,
+        "review_json": review_json_path,
+        "review_html": review_html_path,
+    }
 
 
 def _sanitize_json_value(value: Any) -> Any:
@@ -171,6 +210,7 @@ def _build_summary_markdown(records: list[dict[str, Any]], skipped: int, failed:
             "## 说明",
             "",
             "- `.eml`、正文文本和附件保存在本地 `raw_data/` 下，不应提交到版本库。",
+            "- `financial_email_review.html` 列出本次检查的全部邮件，供人工复核财务相关性。",
             "- `candidate_transactions` 是正则抽取的候选流水，后续仍需要按银行模板校验。",
             "- 如某类流水邮件格式稳定，应新增专用 parser，而不是只依赖通用金额正则。",
         ]

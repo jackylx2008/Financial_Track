@@ -150,6 +150,7 @@ def main() -> int:
     if "normalize" in stages:
         summary["normalize"] = run_normalize_stage(ctx, args)
 
+    _log_pipeline_failure_summary(summary)
     print_json(summary)
     return 0
 
@@ -235,9 +236,28 @@ def run_crack_stage(args: argparse.Namespace) -> dict[str, Any]:
 
     logger.info("Running financial attachment password crack stage: %s", " ".join(cmd))
     completed = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True)
-    if completed.returncode != 0:
-        raise RuntimeError(f"Attachment crack stage failed with exit code {completed.returncode}.")
-    return {"command": cmd, "returncode": completed.returncode}
+    return {
+        "command": cmd,
+        "returncode": completed.returncode,
+        "status": "success" if completed.returncode == 0 else "completed_with_failures",
+    }
+
+
+def _log_pipeline_failure_summary(summary: dict[str, Any]) -> None:
+    extract = summary.get("extract")
+    failed = extract.get("failed_attachments", []) if isinstance(extract, dict) else []
+    if not isinstance(failed, list) or not failed:
+        logger.info("邮件获取账单流程完成，未发现附件密码或解压失败。")
+        return
+    for item in failed:
+        if not isinstance(item, dict):
+            continue
+        logger.warning(
+            "附件名称=%s；收件日期=%s；邮件标题=%s",
+            item.get("attachment_name", "—"),
+            item.get("received_at", "—"),
+            item.get("subject", "—"),
+        )
 
 
 def run_extract_stage(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:
