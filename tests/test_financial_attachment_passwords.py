@@ -7,14 +7,20 @@ from pathlib import Path
 from unittest.mock import patch
 
 from flows.context import AppContext
-from flows.financial_email_bot import _log_pipeline_failure_summary, run_crack_stage
+from flows.financial_email_bot import (
+    _log_pipeline_failure_summary,
+    resolve_stages,
+    run_crack_stage,
+)
 from flows.modules.financial_attachment_cracker import (
     DEFAULT_PASSWORD_ENV,
     PROJECT_ROOT,
     CrackTarget,
+    CrackResult,
     apply_config_defaults,
     filter_saved_targets,
     load_targets,
+    persist_cracked_passwords,
     run_hashcat,
 )
 from flows.modules.financial_attachment_passwords import AttachmentPasswordStore
@@ -27,6 +33,38 @@ from flows.workflows.financial_attachment_extract import (
 
 
 class AttachmentPasswordStoreTests(unittest.TestCase):
+    def test_email_all_stage_stops_after_raw_data_collection(self) -> None:
+        stages = resolve_stages(Namespace(stage="all"))
+        self.assertEqual(stages, ["ingest", "prepare", "crack", "extract"])
+        self.assertNotIn("normalize", stages)
+
+    def test_cracked_passwords_are_persisted_only_by_filename(self) -> None:
+        target = CrackTarget(
+            path=Path("statement.pdf"),
+            kind="pdf",
+            filename="statement.pdf",
+            bank_key="example",
+            subject="示例账单",
+            sent_at="2026-09-17",
+            status="password_failed",
+        )
+        result = CrackResult(target, "cracked", "ok", password="123456")
+        with tempfile.TemporaryDirectory() as directory:
+            password_env = Path(directory) / "passwords.env"
+            password_env.write_text(
+                'FINANCIAL_ATTACHMENT_ZIP_PWD=["old"]\n'
+                'FINANCIAL_ATTACHMENT_PDF_PWD=["old"]\n',
+                encoding="utf-8",
+            )
+            changed = persist_cracked_passwords([result], password_env)
+            contents = password_env.read_text(encoding="utf-8")
+
+        self.assertEqual(changed, 1)
+        self.assertIn("FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON=", contents)
+        self.assertIn('"statement.pdf": "123456"', contents)
+        self.assertNotIn("FINANCIAL_ATTACHMENT_ZIP_PWD", contents)
+        self.assertNotIn("FINANCIAL_ATTACHMENT_PDF_PWD", contents)
+
     def test_failed_mode_does_not_fall_back_to_successful_encrypted_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -50,6 +88,31 @@ class AttachmentPasswordStoreTests(unittest.TestCase):
             targets = load_targets(args)
 
         self.assertEqual(targets, [])
+
+    def test_failed_mode_includes_encrypted_pdfs_extracted_from_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            nested_pdf = root / "inside.pdf"
+            nested_pdf.touch()
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                '[{"path":"outer.zip","kind":"zip",'
+                '"status":"nested_password_failed",'
+                f'"nested_encrypted_files":["{nested_pdf.as_posix()}"]}}]',
+                encoding="utf-8",
+            )
+            args = Namespace(
+                attachment=None,
+                target="failed",
+                manifest=manifest,
+                inventory=root / "inventory.json",
+            )
+
+            targets = load_targets(args)
+
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0].path, nested_pdf)
+        self.assertEqual(targets[0].kind, "pdf")
 
     def test_failed_target_is_not_skipped_by_stale_saved_password(self) -> None:
         target = CrackTarget(
@@ -260,6 +323,10 @@ class AttachmentPasswordStoreTests(unittest.TestCase):
 
         self.assertEqual(result["returncode"], 1)
         self.assertEqual(result["status"], "completed_with_failures")
+        command = result["command"]
+        self.assertEqual(command[command.index("--target") + 1], "failed")
+        self.assertEqual(command[command.index("--mask") + 1], "?d?d?d?d?d?d")
+        self.assertIn("--gpu-only", command)
 
 
 if __name__ == "__main__":

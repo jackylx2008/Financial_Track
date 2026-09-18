@@ -2,7 +2,8 @@
 """邮件流水全流程入口
 
 用途：
-  串联流水邮件采集、附件清单准备、ZIP/PDF 密码破解、附件解密/解压提取和流水归一统计流程。
+  串联流水邮件采集、附件清单准备、ZIP/PDF 密码破解和附件解密/解压提取流程。
+  交易归一化由 GUI 的“邮件数据归一化”页或显式 ``--stage normalize`` 单独执行。
 
 配置文件：
   默认读取项目根目录 `config.yaml`，其中 `app` 负责日志级别，`financial_email` 负责邮箱、日期范围、
@@ -12,6 +13,7 @@
 可选参数：
   --config               配置文件路径，默认 `config.yaml`。
   --stage                运行阶段：check、all、ingest、prepare、crack、extract、normalize；默认 all。
+                         all 只生成 raw_data 原始资料，不执行交易归一化。
   --mailbox              IMAP 邮箱目录，未传入时使用 `financial_email.mailbox`。
   --since                起始日期 `YYYY-MM-DD`，未传入时使用 `financial_email.since`。
   --before               结束日期 `YYYY-MM-DD`。
@@ -33,7 +35,7 @@
   python flows/financial_email_bot.py --stage normalize
 
 输出：
-  将邮件记录、正文、附件、附件清单、破解出的本地密码、解密/解压结果和归一化流水写入 `raw_data/`，
+  将邮件记录、正文、附件、附件清单、破解出的本地密码和解密/解压结果写入 `raw_data/`，
   并在控制台输出 JSON 汇总结果。
 """
 
@@ -142,6 +144,8 @@ def main() -> int:
     if "prepare" in stages:
         summary["prepare_before_crack"] = run_prepare_stage(ctx, args)
     if "crack" in stages and not args.skip_crack:
+        if args.stage == "all":
+            summary["extract_before_crack"] = run_extract_stage(ctx, args)
         summary["crack"] = run_crack_stage(args)
         if "prepare" in stages:
             summary["prepare_after_crack"] = run_prepare_stage(ctx, args)
@@ -157,7 +161,7 @@ def main() -> int:
 
 def resolve_stages(args: argparse.Namespace) -> list[str]:
     if args.stage == "all":
-        return ["ingest", "prepare", "crack", "extract", "normalize"]
+        return ["ingest", "prepare", "crack", "extract"]
     return [args.stage]
 
 
@@ -227,7 +231,14 @@ def run_crack_stage(args: argparse.Namespace) -> dict[str, Any]:
         "--inventory",
         args.inventory,
         "--target",
-        "encrypted",
+        "failed",
+        "--mask",
+        "?d?d?d?d?d?d",
+        "--candidate-profile",
+        "none",
+        "--gpu-only",
+        "--workload",
+        "3",
     ]
     if args.password_env:
         cmd.extend(["--password-env", args.password_env])

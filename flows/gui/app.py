@@ -8,12 +8,14 @@ import os
 import re
 import time
 import tkinter as tk
+import webbrowser
 from pathlib import Path
 from queue import Empty
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
+from flows.gui.normalization_results import load_unresolved_files
 from flows.gui.workflows import (
     FieldSpec,
     WorkflowSpec,
@@ -43,12 +45,20 @@ class WorkflowPanel(ttk.Frame):
         self.input_widgets: list[tk.Widget] = []
 
         self.columnconfigure(0, weight=1)
+        self.rowconfigure(1, weight=1)
         description_style = "EmailDescription.TLabel" if spec.key == "email" else "Description.TLabel"
         description = ttk.Label(self, text=spec.description, style=description_style, wraplength=1100)
         description.grid(row=0, column=0, sticky="ew", pady=(0, 10))
 
-        form = ttk.LabelFrame(self, text="参数设置", padding=10)
-        form.grid(row=1, column=0, sticky="nsew")
+        content = ttk.Frame(self)
+        content.grid(row=1, column=0, sticky="nsew")
+        content.rowconfigure(0, weight=1)
+        content.columnconfigure(0, weight=1)
+        if spec.key == "email_normalize":
+            content.columnconfigure(1, weight=2)
+
+        form = ttk.LabelFrame(content, text="自动归一化", padding=10)
+        form.grid(row=0, column=0, sticky="nsew", padx=(0, 8) if spec.key == "email_normalize" else 0)
         for column in range(spec.form_columns):
             form.columnconfigure(column, weight=1)
         for index, field in enumerate(spec.fields):
@@ -58,6 +68,8 @@ class WorkflowPanel(ttk.Frame):
                 index // spec.form_columns,
                 index % spec.form_columns,
             )
+        if spec.key == "email_normalize":
+            self._build_unresolved_area(content)
 
         button_row = ttk.Frame(self)
         button_row.grid(row=2, column=0, sticky="ew", pady=(12, 0))
@@ -68,6 +80,72 @@ class WorkflowPanel(ttk.Frame):
         self.start_button.grid(row=0, column=2, padx=(0, 8))
         self.cancel_button = ttk.Button(button_row, text="取消任务", command=self.app.cancel_task, state="disabled")
         self.cancel_button.grid(row=0, column=3)
+
+    def _build_unresolved_area(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="未自动提取文件", padding=8)
+        frame.grid(row=0, column=1, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+        toolbar = ttk.Frame(frame)
+        toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 6))
+        toolbar.columnconfigure(0, weight=1)
+        self.unresolved_status_var = tk.StringVar(value="尚未生成失败清单")
+        ttk.Label(toolbar, textvariable=self.unresolved_status_var, style="Hint.TLabel").grid(
+            row=0, column=0, sticky="w"
+        )
+        ttk.Button(toolbar, text="刷新列表", command=self.refresh_unresolved_files).grid(
+            row=0, column=1, padx=(6, 0)
+        )
+        ttk.Button(toolbar, text="打开审核 HTML", command=self.open_review_html).grid(
+            row=0, column=2, padx=(6, 0)
+        )
+
+        columns = ("institution", "type", "file", "reason")
+        self.unresolved_tree = ttk.Treeview(frame, columns=columns, show="headings", height=9)
+        headings = {
+            "institution": "机构",
+            "type": "类型",
+            "file": "文件路径",
+            "reason": "未提取原因",
+        }
+        widths = {"institution": 90, "type": 55, "file": 330, "reason": 190}
+        for column in columns:
+            self.unresolved_tree.heading(column, text=headings[column])
+            self.unresolved_tree.column(column, width=widths[column], minwidth=50, stretch=column in {"file", "reason"})
+        self.unresolved_tree.grid(row=1, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.unresolved_tree.yview)
+        scrollbar.grid(row=1, column=1, sticky="ns")
+        self.unresolved_tree.configure(yscrollcommand=scrollbar.set)
+        self.refresh_unresolved_files()
+
+    def refresh_unresolved_files(self) -> None:
+        tree = getattr(self, "unresolved_tree", None)
+        if tree is None:
+            return
+        items = load_unresolved_files(self.app.project_root)
+        for item_id in tree.get_children():
+            tree.delete(item_id)
+        for item in items:
+            tree.insert(
+                "",
+                "end",
+                values=(
+                    item["bank_name"] or "—",
+                    item["file_type"] or "—",
+                    item["path"] or item["filename"],
+                    item["reason"] or "自动解析未提取到交易",
+                ),
+            )
+        self.unresolved_status_var.set(
+            f"共 {len(items)} 个文件待人工审核或按需 AI/OCR" if items else "没有未自动提取的文件"
+        )
+
+    def open_review_html(self) -> None:
+        path = self.app.project_root / "processed_data/normalized/bank_transactions_full_review.html"
+        if not path.is_file():
+            messagebox.showinfo("审核文件尚未生成", "请先执行自动归一化。", parent=self)
+            return
+        webbrowser.open(path.resolve().as_uri())
 
     def _build_field(self, parent: ttk.LabelFrame, field: FieldSpec, row: int, column: int) -> None:
         container = ttk.Frame(parent, padding=(4, 3))
@@ -123,7 +201,7 @@ class WorkflowPanel(ttk.Frame):
 
     def values(self) -> dict[str, str | bool]:
         values = {key: variable.get() for key, variable in self.variables.items()}
-        if self.spec.key in {"email", "attachment_bruteforce"}:
+        if self.spec.key in {"email", "email_normalize"}:
             values["config"] = self.app.selected_config_path()
         return values
 
@@ -458,6 +536,7 @@ class FinancialTrackApp:
             self.status_var.set("正在取消")
             self.append_log(event.message, "warning")
         elif event.kind == "finished":
+            finished_panel = self.active_panel
             cancelled = event.message == "任务已取消"
             if cancelled:
                 status, tag = "已取消", "warning"
@@ -467,6 +546,8 @@ class FinancialTrackApp:
                 status, tag = "失败", "error"
             self.append_log(f"{event.message}；耗时 {self._format_elapsed(event.elapsed_seconds)}", tag)
             self._finish_ui(status, event.elapsed_seconds, success=event.returncode == 0 and not cancelled)
+            if finished_panel is not None and event.returncode == 0 and not cancelled:
+                finished_panel.refresh_unresolved_files()
             if event.returncode not in {0, None} and not cancelled and not self.closing:
                 messagebox.showerror("工作流执行失败", event.message, parent=self.root)
 

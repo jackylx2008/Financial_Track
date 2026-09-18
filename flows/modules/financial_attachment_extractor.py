@@ -25,6 +25,19 @@ def extract_attachment(item: dict[str, Any], password_store: AttachmentPasswordS
 
     if path.suffix.lower() == ".zip":
         result = _extract_zip(path, output_dir, passwords)
+        if result["status"] == "success":
+            nested_failures = _decrypt_nested_pdfs(
+                result["output_files"],
+                password_store,
+                str(item.get("bank_key", "")),
+            )
+            if nested_failures:
+                result = {
+                    **result,
+                    "status": "nested_password_failed",
+                    "reason": "encrypted PDF files inside ZIP still require passwords",
+                    "nested_encrypted_files": nested_failures,
+                }
     elif path.suffix.lower() == ".pdf":
         result = _decrypt_pdf(path, output_dir, passwords)
     else:
@@ -44,7 +57,7 @@ def _extract_zip(path: Path, output_dir: Path, passwords: list[str]) -> dict[str
     if not zipfile.is_zipfile(path):
         return {"status": "invalid_zip", "reason": "not a valid zip file", "output_files": []}
 
-    candidates = passwords or [""]
+    candidates = list(dict.fromkeys(["", *passwords]))
     last_error = ""
     for index, password in enumerate(candidates, start=1):
         try:
@@ -112,7 +125,7 @@ def _decrypt_pdf(path: Path, output_dir: Path, passwords: list[str]) -> dict[str
     except ImportError:
         return {"status": "missing_dependency", "reason": "pypdf is required for encrypted pdf files", "output_files": []}
 
-    candidates = passwords or [""]
+    candidates = list(dict.fromkeys(["", *passwords]))
     last_error = ""
     for index, password in enumerate(candidates, start=1):
         try:
@@ -133,6 +146,45 @@ def _decrypt_pdf(path: Path, output_dir: Path, passwords: list[str]) -> dict[str
         except Exception as exc:
             last_error = str(exc)
     return {"status": "password_failed", "reason": _short_reason(last_error or "no password matched pdf"), "output_files": []}
+
+
+def _decrypt_nested_pdfs(
+    output_files: list[str],
+    password_store: AttachmentPasswordStore,
+    bank_key: str,
+) -> list[str]:
+    failures: list[str] = []
+    for value in output_files:
+        path = Path(value)
+        if path.suffix.lower() != ".pdf":
+            continue
+        try:
+            from pypdf import PdfReader, PdfWriter
+
+            reader = PdfReader(str(path))
+            if not reader.is_encrypted:
+                continue
+            match = password_store.resolve(bank_key=bank_key, attachment_path=path)
+            decrypted = False
+            candidates = list(dict.fromkeys(["", *(match.passwords if match else [])]))
+            for password in candidates:
+                reader = PdfReader(str(path))
+                if not reader.decrypt(password):
+                    continue
+                writer = PdfWriter()
+                for page in reader.pages:
+                    writer.add_page(page)
+                temporary = path.with_suffix(path.suffix + ".decrypted.tmp")
+                with temporary.open("wb") as file:
+                    writer.write(file)
+                temporary.replace(path)
+                decrypted = True
+                break
+            if not decrypted:
+                failures.append(str(path))
+        except Exception:
+            failures.append(str(path))
+    return failures
 
 
 def _base_result(item: dict[str, Any], path: Path) -> dict[str, Any]:

@@ -59,6 +59,8 @@ python flows/ledger_review_export.py
 
 ```text
 raw_data/financial_email/                  # 邮件、PDF、附件等校验对账材料
+raw_data/bank/<银行名称>/                  # 解密/解压后的无密码银行原始文件
+raw_data/bank/bank_information_summary.html # 已获取银行信息汇总
 raw_data/order_json/pdd|meituan/           # 截图 AI 识别后的订单 JSON
 processed_data/normalized/                 # bank/orders/financial_transactions/link 中间层
 processed_data/ledger/                     # 最终账本 ledger_entries 和质量报告
@@ -80,17 +82,21 @@ python main.py
 功能时才检查服务和模型是否可用，并在不可用时报告错误。
 所有耗时流程通过后台
 CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务。GUI 不保存或展示邮箱授权码及附件密码；
-`common.env` 只配置附件密码文件路径，实际 ZIP/PDF 密码由该路径对应的专用密码文件提供。详细规范见
+`common.env` 只配置附件密码文件路径，破解密码按附件文件名保存在该路径对应的专用密码文件。详细规范见
 [`docs/GUI_DESIGN_REQUIREMENTS.md`](docs/GUI_DESIGN_REQUIREMENTS.md)。
 
-在 GUI 中获取 126 邮箱账单时，进入“邮件获取账单”页签。界面固定执行完整邮件处理流程；如需扫描邮箱内
+在 GUI 中获取 126 邮箱账单时，进入“邮件获取账单”页签。该页只采集并整理原始资料，不生成交易；如需扫描邮箱内
 全部历史银行账单，勾选“扫描邮箱全部历史邮件（忽略日期/数量限制）”后执行。全量扫描
 会读取整个邮箱，按发件人、主题、正文和附件名称初步判断财务相关性，并仅将匹配邮件、正文和附件写入
 本机 `raw_data/financial_email/`，耗时取决于邮箱邮件数量。无论初判是否匹配，本次检查范围内的全部邮件
 都会列入 `raw_data/financial_email/financial_email_review.html`，用于人工审核误判和漏判。
 “检查起始日期”默认为 `2015-01-01`，起止日期运行前可直接修改；邮箱目录固定使用配置中的 `INBOX`，邮件、
-清单、解压和归一化输出路径均使用配置或 CLI 默认值。主配置文件统一在“全局配置”页选择并重新加载。勾选
-全量历史扫描时日期限制不生效；“跳过密码破解”只跳过外部破解步骤，不影响使用专用密码文件中的密码解压。
+清单和解压路径均使用配置或 CLI 默认值。主配置文件统一在“全局配置”页选择并重新加载。
+“破解邮件附件”默认勾选，使用本地 GPU 枚举六位数字密码；取消勾选只跳过破解步骤，不影响使用已保存密码解压。
+
+紧随其后的“邮件数据归一化”页读取上述 `raw_data`，执行交易提取、质量检查并生成完整人工审核 HTML。
+第一步默认只执行确定性自动归一化；右侧列出未能自动提取交易的文件。“对未识别 PDF 使用本地 AI/OCR”
+默认不勾选，需要时再启用，届时才检查本地 AI 并把 PDF 页面渲染为图片进行 OCR。
 
 ## 环境准备
 
@@ -383,7 +389,7 @@ raw_data/financial_email/attachment_inventory.json
 raw_data/financial_email/attachment_inventory.md
 ```
 
-`FINANCIAL_ATTACHMENT_PASSWORD_BY_TYPE_JSON` 是标准的按文件类型配置方式；`FINANCIAL_ATTACHMENT_PDF_PWD` 和 `FINANCIAL_ATTACHMENT_ZIP_PWD` 是按类型配置的简写。清单只记录是否已匹配到密码、匹配来源和候选密码数量，不输出真实密码。
+破解成功后仅写入 `FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON`，使每个附件文件名与自己的密码一一对应。清单只记录是否已匹配到密码、匹配来源和候选密码数量，不输出真实密码。
 
 尝试解密/解压附件：
 
@@ -396,6 +402,8 @@ python flows/financial_email_bot.py --stage extract
 ```text
 raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json
 raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
+raw_data/bank/<银行名称>/
+raw_data/bank/bank_information_summary.html
 ```
 
 无法正确解压的 ZIP 或无法读取的 PDF 不会中断其他附件及后续阶段。流程结束时，失败日志和
@@ -403,24 +411,24 @@ raw_data/financial_email/extracted_attachments/attachment_extract_failures.md
 
 ### 使用 GPU 暴力破解邮件附件
 
-GUI 的“暴力破解邮件附件”页紧跟“邮件获取账单”，只读取附件提取清单中密码错误的 PDF/ZIP。执行时固定
+GUI 已将破解功能合并到“邮件获取账单”页；“破解邮件附件”默认勾选。完整流程会先尝试提取并生成失败清单，
+再只破解其中密码错误的 PDF/ZIP（包括 ZIP 内仍加密的 PDF），随后重新提取。执行时固定
 使用 6 位数字掩码 `?d?d?d?d?d?d`（即 `000000`–`999999`），关闭候选密码和 CPU 数字枚举回退，并通过
-Hashcat `-D 2` 限定为本地 GPU 设备。破解结果写回 `FINANCIAL_ATTACHMENT_PASSWORD_ENV_FILE` 指向的
-本地密码文件，日志默认不显示真实密码。
+Hashcat `-D 2` 限定为本地 GPU 设备。破解结果按文件名写回 `FINANCIAL_ATTACHMENT_PASSWORD_ENV_FILE`
+指向的本地密码文件，日志默认不显示真实密码。随后自动重新提取，将无密码文件按银行写入 `raw_data/bank/`。
 
-首次使用建议先勾选“仅检查 Hashcat/John 工具”，确认 `common.env` 中配置的 Hashcat、zip2john 和
-pdf2john 路径可用；也可勾选“仅列出待破解附件”核对范围。命令行等价调用为：
+命令行等价调用为：
 
 ```powershell
 python flows/financial_attachment_crack.py --target failed --mask "?d?d?d?d?d?d" --candidate-profile none --gpu-only
 ```
 
-### 历史邮件/PDF 流水整理（对账兼容）
+### 邮件数据归一化与人工审核
 
-已下载的邮件正文和已成功解密/解压的 PDF、ZIP 内部文件仍可整理为历史兼容中间层，后续用于和安卓截图流水生成差异报告：
+GUI 第二个页签“邮件数据归一化”读取已下载的邮件正文和已成功解密/解压的 PDF、ZIP 内部文件：
 
 ```powershell
-python flows/financial_email_bot.py --stage normalize
+python flows/normalize_transactions.py --source bank
 ```
 
 默认读取：
@@ -437,14 +445,18 @@ processed_data/normalized/bank_transactions.jsonl
 processed_data/normalized/bank_transactions.json
 processed_data/normalized/bank_transactions_quality_report.md
 processed_data/normalized/bank_transactions_full_review.html
+processed_data/normalized/email_normalization_unresolved.json
 ```
 
 整理过程会保留金额、方向、账户尾号和来源引用，方便回查邮件、附件、PDF 或 Excel 行。迁移完成后，这些记录应标记为 `reconciliation` 来源，只参与校验，不直接生成权威账本流水。
 
 邮件正文优先使用工商、招商、建设银行专用规则；附件按 PDF、XLS/XLSX、CSV 分派解析。余额、额度、
 本期应还和合计行会在去重前过滤。只有确定性解析器无法识别文档时，才会按
-`financial_document_ai_fallback` 配置调用本地 AI；首次实际调用前检查服务和模型，不执行 GUI 心跳。
+`financial_document_ai_fallback` 配置调用本地 AI；PDF 文本解析仍无结果时可直接渲染页面并调用视觉接口 OCR。
+首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
+未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由
+页面上的“打开审核 HTML”按钮查看。
 完整人工审核集写入 `bank_transactions_full_review.html`，包含全部归一化交易的精确金额、未脱敏摘要、
 源数据中能够取得的账户全名和商户全名，并支持机构、日期、方向、金额区间、账户、商户和来源筛选。
 完整审核集含个人财务信息，只能保存在被 Git 忽略的 `processed_data/` 中。

@@ -83,6 +83,9 @@ financial_document_ai_fallback:
   max_documents: ${FINANCIAL_DOCUMENT_AI_FALLBACK_MAX_DOCUMENTS:-10}
   max_chars: ${FINANCIAL_DOCUMENT_AI_FALLBACK_MAX_CHARS:-24000}
   max_tokens: ${FINANCIAL_DOCUMENT_AI_FALLBACK_MAX_TOKENS:-4096}
+  ocr_enabled: ${FINANCIAL_DOCUMENT_AI_OCR_ENABLED:-true}
+  ocr_max_pages: ${FINANCIAL_DOCUMENT_AI_OCR_MAX_PAGES:-20}
+  ocr_dpi: ${FINANCIAL_DOCUMENT_AI_OCR_DPI:-144}
 
 financial_attachment_cracker:
   hashcat_path: ${FINANCIAL_ATTACHMENT_HASHCAT_PATH:-../hashcat/hashcat.exe}

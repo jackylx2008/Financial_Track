@@ -40,6 +40,7 @@ def run(
     json_path = output_path / "bank_transactions.json"
     report_path = output_path / "bank_transactions_quality_report.md"
     full_review_html_path = output_path / "bank_transactions_full_review.html"
+    unresolved_path = output_path / "email_normalization_unresolved.json"
 
     with jsonl_path.open("w", encoding="utf-8") as file:
         for transaction in deduped_transactions:
@@ -58,6 +59,18 @@ def run(
         encoding="utf-8",
     )
     full_review_html = write_full_review_html(deduped_transactions, full_review_html_path)
+    unresolved_files = attachment_stats.get("unresolved_files", [])
+    unresolved_path.write_text(
+        json.dumps(
+            {
+                "count": len(unresolved_files),
+                "files": unresolved_files,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     summary = {
         "email_records_file": str(email_records_file),
@@ -72,6 +85,8 @@ def run(
         "json": str(json_path),
         "quality_report": str(report_path),
         "full_review_html": full_review_html,
+        "unresolved_files": len(unresolved_files),
+        "unresolved_file_list": str(unresolved_path),
         "ai_fallback": ai_fallback.stats(),
     }
     logger.info("Finished bank transaction consolidation: %s", summary)

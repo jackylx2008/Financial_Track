@@ -328,12 +328,18 @@ def load_targets(args: argparse.Namespace) -> list[CrackTarget]:
     if args.target == "failed":
         if not args.manifest.exists():
             return []
-        targets = [
-            target_from_item(item)
-            for item in read_json_list(args.manifest)
-            if item.get("status") == "password_failed"
-            and extension_kind(Path(str(item.get("path", "")))) in {"zip", "pdf"}
-        ]
+        for item in read_json_list(args.manifest):
+            if item.get("status") == "password_failed":
+                path = Path(str(item.get("path", "")))
+                if extension_kind(path) in {"zip", "pdf"}:
+                    targets.append(target_from_item(item))
+            if item.get("status") == "nested_password_failed":
+                for nested_path in item.get("nested_encrypted_files", []):
+                    targets.append(
+                        target_from_item(
+                            {**item, "path": nested_path, "kind": "pdf"}
+                        )
+                    )
         return dedupe_targets(targets)
 
     if args.inventory.exists():
@@ -933,9 +939,6 @@ def persist_cracked_passwords(results: list[CrackResult], password_env: Path) ->
     by_filename = parse_json_object(
         values.get("FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON", "{}")
     )
-    zip_passwords = parse_json_list(values.get("FINANCIAL_ATTACHMENT_ZIP_PWD", "[]"))
-    pdf_passwords = parse_json_list(values.get("FINANCIAL_ATTACHMENT_PDF_PWD", "[]"))
-    changed = 0
     changed_targets = 0
     for item in cracked_attachments:
         item_changed = False
@@ -946,31 +949,18 @@ def persist_cracked_passwords(results: list[CrackResult], password_env: Path) ->
         if item.password not in current:
             by_filename[key] = current + [item.password] if current else item.password
             item_changed = True
-        type_passwords = zip_passwords if item.target.kind == "zip" else pdf_passwords
-        if item.password not in type_passwords:
-            type_passwords.append(item.password)
-            item_changed = True
         if item_changed:
-            changed += 1
             changed_targets += 1
 
-    if not changed:
+    if not changed_targets:
         return 0
 
-    set_env_assignment(
-        password_env,
-        "FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON",
-        json.dumps(by_filename, ensure_ascii=False),
-    )
-    set_env_assignment(
-        password_env,
-        "FINANCIAL_ATTACHMENT_ZIP_PWD",
-        json.dumps(zip_passwords, ensure_ascii=False, separators=(",", ":")),
-    )
-    set_env_assignment(
-        password_env,
-        "FINANCIAL_ATTACHMENT_PDF_PWD",
-        json.dumps(pdf_passwords, ensure_ascii=False, separators=(",", ":")),
+    password_env.parent.mkdir(parents=True, exist_ok=True)
+    password_env.write_text(
+        "FINANCIAL_ATTACHMENT_PASSWORD_BY_FILENAME_JSON="
+        + json.dumps(by_filename, ensure_ascii=False)
+        + "\n",
+        encoding="utf-8",
     )
     return changed_targets
 
@@ -1004,16 +994,6 @@ def parse_json_object(value: str) -> dict[str, Any]:
     return {str(key): item for key, item in parsed.items()}
 
 
-def parse_json_list(value: str) -> list[str]:
-    try:
-        parsed = json.loads(value or "[]")
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    return [str(item) for item in parsed if str(item)]
-
-
 def normalize_password_value(value: Any) -> list[str]:
     if isinstance(value, list):
         return [str(item) for item in value if str(item)]
@@ -1029,25 +1009,6 @@ def find_case_insensitive_key(data: dict[str, Any], key: str) -> str | None:
         if existing_key.lower() == lowered:
             return existing_key
     return None
-
-
-def set_env_assignment(env_path: Path, key: str, value: str) -> None:
-    env_path.parent.mkdir(parents=True, exist_ok=True)
-    lines = env_path.read_text(encoding="utf-8").splitlines() if env_path.exists() else []
-    assignment = f"{key}={value}"
-    for index, raw_line in enumerate(lines):
-        line = raw_line.strip()
-        if line.startswith("#") or "=" not in line:
-            continue
-        existing_key, _ = line.split("=", 1)
-        if existing_key.strip() == key:
-            lines[index] = assignment
-            break
-    else:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.append(assignment)
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def print_summary(

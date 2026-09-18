@@ -119,21 +119,16 @@ def _email(values: Values) -> tuple[str, list[str]]:
     _add(args, "--since", values.get("since"))
     _add(args, "--before", values.get("before"))
     _add(args, "--all-history", values.get("all_history", False))
-    _add(args, "--skip-crack", values.get("skip_crack", True))
+    _add(args, "--skip-crack", not bool(values.get("crack_attachments", True)))
     return "financial_email_bot.py", args
 
 
-def _attachment_bruteforce(values: Values) -> tuple[str, list[str]]:
+def _email_normalize(values: Values) -> tuple[str, list[str]]:
     args: list[str] = []
     _add(args, "--config", values.get("config", "config.yaml"))
-    _add(args, "--target", "failed")
-    _add(args, "--mask", "?d?d?d?d?d?d")
-    _add(args, "--candidate-profile", "none")
-    _add(args, "--gpu-only", True)
-    _add(args, "--workload", values.get("workload", "3"))
-    _add(args, "--check-tools", values.get("check_tools", False))
-    _add(args, "--list-targets", values.get("list_targets", False))
-    return "financial_attachment_crack.py", args
+    _add(args, "--source", "bank")
+    _add(args, "--no-document-ai", not bool(values.get("use_local_ai_ocr", False)))
+    return "normalize_transactions.py", args
 
 
 def _order_capture(values: Values) -> tuple[str, list[str]]:
@@ -227,8 +222,8 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
         "email",
         "邮件获取账单",
         (
-            "从邮箱检查邮件和附件，初步判断是否与财务有关；仅将财务相关邮件、正文和附件下载到 "
-            "raw_data/financial_email/，同时生成包含本次全部邮件条目的 HTML，供人工审核判断结果。"
+            "从邮箱获取财务邮件和附件；默认使用本地显卡破解失败的六位数字密码，解密后的原始文件按银行写入 "
+            "raw_data/bank/，并生成银行信息 HTML 汇总。"
         ),
         (
             FieldSpec(
@@ -245,31 +240,33 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
                 False,
                 help_text="忽略日期和数量限制；仅主动测试全量账单时勾选",
             ),
-            FieldSpec("skip_crack", "跳过密码破解", "bool", True),
+            FieldSpec(
+                "crack_attachments",
+                "破解邮件附件（六位数字，使用本地显卡）",
+                "bool",
+                True,
+            ),
         ),
         _email,
         form_columns=2,
     ),
     WorkflowSpec(
-        "attachment_bruteforce",
-        "暴力破解邮件附件",
+        "email_normalize",
+        "邮件数据归一化",
         (
-            "使用本地显卡和 Hashcat 处理密码错误的 PDF/ZIP 邮件附件；"
-            "密码范围固定为 000000–999999，破解结果写入配置指定的本地密码文件。"
+            "读取 raw_data 中已收集并去除密码的邮件、PDF 和表格，先用确定性规则自动整合交易并生成人工审核 HTML；"
+            "未自动提取的文件显示在右侧，确认后可按需调用本地 AI 直接 OCR。"
         ),
         (
             FieldSpec(
-                "workload",
-                "GPU 工作负载",
-                "choice",
-                "3",
-                ("1", "2", "3", "4"),
-                help_text="1 最轻，4 最高；默认 3",
+                "use_local_ai_ocr",
+                "对未识别 PDF 使用本地 AI/OCR",
+                "bool",
+                False,
+                help_text="默认关闭；第一步只做自动归一化并列出失败文件",
             ),
-            FieldSpec("check_tools", "仅检查 Hashcat/John 工具", "bool", False),
-            FieldSpec("list_targets", "仅列出待破解附件", "bool", False),
         ),
-        _attachment_bruteforce,
+        _email_normalize,
         form_columns=2,
     ),
     WorkflowSpec(

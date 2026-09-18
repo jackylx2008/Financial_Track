@@ -23,11 +23,18 @@ def read_attachment_transactions(
     ai_fallback: FinancialDocumentAiFallback | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not manifest_path.exists():
-        return [], {"manifest_exists": False, "files_seen": 0, "transactions": 0, "parse_failures": []}
+        return [], {
+            "manifest_exists": False,
+            "files_seen": 0,
+            "transactions": 0,
+            "parse_failures": [],
+            "unresolved_files": [],
+        }
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     transactions: list[dict[str, Any]] = []
     failures: list[str] = []
     pending_ai: list[tuple[Path, dict[str, Any]]] = []
+    unresolved_files: list[dict[str, str]] = []
     files_seen = 0
     for item in manifest:
         if item.get("status") != "success":
@@ -45,26 +52,51 @@ def read_attachment_transactions(
                     parsed = _read_xlsx_transactions(path, item)
                 elif path.suffix.lower() == ".csv":
                     parsed = _read_csv_transactions(path, item)
-                if not parsed and ai_fallback is not None and path.suffix.lower() in {".pdf", ".xls", ".xlsx", ".csv"}:
-                    pending_ai.append((path, item))
+                if not parsed:
+                    if ai_fallback is not None and path.suffix.lower() in {".pdf", ".xls", ".xlsx", ".csv"}:
+                        pending_ai.append((path, item))
+                    else:
+                        unresolved_files.append(_unresolved_file(path, item))
                 transactions.extend(parsed)
             except Exception as exc:
                 failures.append(f"{path}: {exc}")
+                unresolved_files.append(_unresolved_file(path, item, f"自动解析失败：{type(exc).__name__}"))
     priority = {".pdf": 0, ".xls": 1, ".xlsx": 1, ".csv": 2}
     for path, item in sorted(pending_ai, key=lambda pair: (priority.get(pair[0].suffix.lower(), 9), str(pair[0]))):
         try:
-            transactions.extend(_read_attachment_with_ai(path, item, ai_fallback))
+            ai_rows = _read_attachment_with_ai(path, item, ai_fallback)
+            transactions.extend(ai_rows)
+            if not ai_rows:
+                unresolved_files.append(_unresolved_file(path, item))
         except Exception as exc:
             failures.append(f"{path}: AI fallback: {type(exc).__name__}: {exc}")
+            unresolved_files.append(_unresolved_file(path, item, f"AI/OCR 处理失败：{type(exc).__name__}"))
     stats = {
         "manifest_exists": True,
         "files_seen": files_seen,
         "transactions": len(transactions),
         "parse_failures": failures,
+        "unresolved_files": unresolved_files,
     }
     if ai_fallback is not None:
         stats["ai_fallback"] = ai_fallback.stats()
     return transactions, stats
+
+
+def _unresolved_file(
+    path: Path,
+    manifest_item: dict[str, Any],
+    reason: str = "自动解析未提取到交易",
+) -> dict[str, str]:
+    bank_key = str(manifest_item.get("bank_key", "unknown") or "unknown")
+    return {
+        "bank_key": bank_key,
+        "bank_name": str(manifest_item.get("bank_name", "")).strip() or _bank_name(bank_key) or "未知机构",
+        "file_type": path.suffix.lower().lstrip(".").upper() or "文件",
+        "filename": path.name,
+        "path": str(path),
+        "reason": reason,
+    }
 
 
 def _read_pdf_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
@@ -418,11 +450,27 @@ def _read_attachment_with_ai(
         "message_uid": manifest_item.get("message_uid", ""),
         "message_id": manifest_item.get("message_id", ""),
     }
+    bank_name = str(manifest_item.get("bank_name", "")).strip()
     bank_key = str(manifest_item.get("bank_key", "unknown") or "unknown")
+    bank_key = {
+        "交通银行": "bocom",
+        "工商银行": "icbc",
+        "建设银行": "ccb",
+        "招商银行": "cmb",
+    }.get(bank_name, bank_key)
+    if path.suffix.lower() == ".pdf":
+        return ai_fallback.parse_pdf(
+            path=path,
+            text=text,
+            bank_key=bank_key,
+            bank_name=bank_name or _bank_name(bank_key),
+            source_record=source,
+            source_label=source["source_type"],
+        )
     return ai_fallback.parse(
         text=text,
         bank_key=bank_key,
-        bank_name=_bank_name(bank_key),
+        bank_name=bank_name or _bank_name(bank_key),
         source_record=source,
         source_label=source["source_type"],
     )
@@ -513,7 +561,12 @@ def _normalize_date_time(value: str) -> str:
 
 
 def _bank_name(bank_key: str) -> str:
-    return {"icbc": "工商银行", "cmb": "招商银行", "ccb": "建设银行"}.get(bank_key, "")
+    return {
+        "icbc": "工商银行",
+        "cmb": "招商银行",
+        "ccb": "建设银行",
+        "bocom": "交通银行",
+    }.get(bank_key, "")
 
 
 def _account_full_from_xls(sheet: Any) -> str:

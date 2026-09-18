@@ -34,15 +34,14 @@ class WorkflowCommandTests(unittest.TestCase):
     def test_email_page_is_compact_and_runs_complete_pipeline(self) -> None:
         spec = WORKFLOW_BY_KEY["email"]
         self.assertEqual(spec.title, "邮件获取账单")
-        self.assertIn("全部邮件条目", spec.description)
-        self.assertIn("raw_data/financial_email/", spec.description)
+        self.assertIn("raw_data/bank/", spec.description)
         self.assertEqual(
             [field.key for field in spec.fields],
             [
                 "since",
                 "before",
                 "all_history",
-                "skip_crack",
+                "crack_attachments",
             ],
         )
         self.assertEqual(default_values("email")["since"], "2015-01-01")
@@ -53,7 +52,7 @@ class WorkflowCommandTests(unittest.TestCase):
         self.assertTrue(command[1].endswith("financial_email_bot.py"))
         self.assertEqual(command[command.index("--stage") + 1], "all")
         self.assertEqual(command[command.index("--config") + 1], "D:/settings/financial.yaml")
-        self.assertIn("--skip-crack", command)
+        self.assertNotIn("--skip-crack", command)
         self.assertNotIn("--output-dir", command)
         self.assertNotIn("--max-messages", command)
 
@@ -76,23 +75,28 @@ class WorkflowCommandTests(unittest.TestCase):
         self.assertEqual(command[command.index("--since") + 1], "2020-02-03")
         self.assertEqual(command[command.index("--before") + 1], "2026-04-05")
 
-    def test_attachment_bruteforce_uses_failed_targets_and_six_digit_gpu_mask(self) -> None:
-        keys = list(WORKFLOW_BY_KEY)
-        self.assertEqual(keys[keys.index("email") + 1], "attachment_bruteforce")
-        values = default_values("attachment_bruteforce")
-        values["config"] = "D:/settings/financial.yaml"
-        command = build_command(
-            WORKFLOW_BY_KEY["attachment_bruteforce"],
-            values,
-            Path("project"),
-        )
+    def test_email_page_can_disable_integrated_attachment_cracking(self) -> None:
+        self.assertNotIn("attachment_bruteforce", WORKFLOW_BY_KEY)
+        values = default_values("email")
+        self.assertTrue(values["crack_attachments"])
+        values["crack_attachments"] = False
+        command = build_command(WORKFLOW_BY_KEY["email"], values, Path("project"))
+        self.assertIn("--skip-crack", command)
 
-        self.assertTrue(command[1].endswith("financial_attachment_crack.py"))
-        self.assertEqual(command[command.index("--target") + 1], "failed")
-        self.assertEqual(command[command.index("--mask") + 1], "?d?d?d?d?d?d")
-        self.assertEqual(command[command.index("--candidate-profile") + 1], "none")
-        self.assertIn("--gpu-only", command)
-        self.assertNotIn("--show-passwords", command)
+    def test_email_normalization_is_second_tab_and_defaults_to_automatic_only(self) -> None:
+        keys = list(WORKFLOW_BY_KEY)
+        self.assertEqual(keys[1], "email_normalize")
+        spec = WORKFLOW_BY_KEY["email_normalize"]
+        self.assertEqual(spec.title, "邮件数据归一化")
+        values = default_values("email_normalize")
+        self.assertFalse(values["use_local_ai_ocr"])
+        command = build_command(spec, values, Path("project"))
+        self.assertTrue(command[1].endswith("normalize_transactions.py"))
+        self.assertEqual(command[command.index("--source") + 1], "bank")
+        self.assertIn("--no-document-ai", command)
+        values["use_local_ai_ocr"] = True
+        command = build_command(spec, values, Path("project"))
+        self.assertNotIn("--no-document-ai", command)
 
     def test_capture_command_only_emits_mode_specific_limits(self) -> None:
         values = default_values("capture")

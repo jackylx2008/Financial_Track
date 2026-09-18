@@ -91,6 +91,35 @@ class AttachmentParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["account_tail"], "5678")
         self.assertEqual(rows[0]["account_full_name"], "6227000000005678")
 
+    def test_reports_attachment_without_automatic_transactions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            csv_path = root / "unrecognized_statement.csv"
+            csv_path.write_text("说明,内容\n账单,没有交易明细\n", encoding="utf-8")
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    [
+                        {
+                            "status": "success",
+                            "bank_key": "ccb",
+                            "bank_name": "建设银行",
+                            "output_files": [str(csv_path)],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            rows, stats = read_attachment_transactions(manifest)
+
+        self.assertEqual(rows, [])
+        self.assertEqual(len(stats["unresolved_files"]), 1)
+        unresolved = stats["unresolved_files"][0]
+        self.assertEqual(unresolved["bank_name"], "建设银行")
+        self.assertEqual(unresolved["filename"], "unrecognized_statement.csv")
+        self.assertIn("自动解析", unresolved["reason"])
+
 
 class FilteringAndReviewTests(unittest.TestCase):
     def test_filters_zero_totals_and_low_confidence_untimed_candidates(self) -> None:
@@ -154,6 +183,44 @@ class FilteringAndReviewTests(unittest.TestCase):
 
 
 class LocalAiFallbackTests(unittest.TestCase):
+    def test_pdf_ocr_uses_local_vision_api_for_unrecognized_pdf(self) -> None:
+        fallback = FinancialDocumentAiFallback(
+            {
+                "financial_document_ai_fallback": {
+                    "enabled": True,
+                    "ocr_enabled": True,
+                }
+            },
+            Path("project"),
+        )
+        response = (
+            '{"transactions":[{"transaction_time":"2026-09-17",'
+            '"amount":"88.50","direction":"outflow","merchant":"示例商户",'
+            '"currency":"CNY"}]}'
+        )
+        with (
+            patch.object(fallback, "_ensure_available"),
+            patch(
+                "flows.modules.financial_document_ai._render_pdf_pages",
+                return_value=[Path("page_0001.png")],
+            ),
+            patch.object(fallback.client, "chat_with_image", return_value=response) as chat,
+        ):
+            transactions = fallback.parse_pdf(
+                path=Path("statement.pdf"),
+                text="",
+                bank_key="bocom",
+                bank_name="交通银行",
+                source_record={"source_file": "statement.pdf"},
+                source_label="email_attachment_pdf",
+            )
+
+        self.assertEqual(len(transactions), 1)
+        self.assertEqual(transactions[0]["bank_key"], "bocom")
+        self.assertEqual(transactions[0]["merchant"], "示例商户")
+        self.assertEqual(fallback.stats()["ocr_pages_succeeded"], 1)
+        chat.assert_called_once()
+
     def test_failed_availability_check_is_not_repeated(self) -> None:
         fallback = FinancialDocumentAiFallback(
             {"financial_document_ai_fallback": {"enabled": True}},

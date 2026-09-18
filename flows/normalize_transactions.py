@@ -15,6 +15,7 @@
   --attachment-manifest  附件提取清单。
   --order-json-root      各平台订单 JSON 根目录。
   --order-platform       可重复指定订单平台。
+  --no-document-ai      禁用银行文档的本地 AI/OCR 回退。
 
 示例：
   python flows/normalize_transactions.py --source all
@@ -76,12 +77,23 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Order platform to normalize. Can be repeated. Defaults to pdd and meituan.",
     )
+    parser.add_argument(
+        "--no-document-ai",
+        action="store_true",
+        help="Disable on-demand local AI/OCR fallback for unrecognized bank documents.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
     ctx = bootstrap_context(__file__, args.config)
+    if args.no_document_ai:
+        section = ctx.config.get("financial_document_ai_fallback")
+        if not isinstance(section, dict):
+            section = {}
+            ctx.config["financial_document_ai_fallback"] = section
+        section["enabled"] = False
     summary = run_transaction_normalize(
         ctx=ctx,
         sources=resolve_sources(args.source),
