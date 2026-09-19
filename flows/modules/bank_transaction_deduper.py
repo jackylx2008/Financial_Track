@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from flows.modules.bank_transaction_schema import normalize_text_key, stable_transaction_id
@@ -20,14 +21,16 @@ def dedupe_transactions(transactions: list[dict[str, Any]]) -> tuple[list[dict[s
             by_key[key] = _merge_transactions(by_key[key], transaction)
         else:
             by_key[key] = transaction
-    deduped = list(by_key.values())
+    deduped, cross_source_repayments = _merge_cross_source_credit_card_repayments(list(by_key.values()))
+    duplicate_count += cross_source_repayments
     for transaction in deduped:
         transaction["transaction_id"] = stable_transaction_id(transaction)
     deduped.sort(key=lambda item: (item.get("transaction_time", ""), item.get("bank_key", ""), item.get("amount", "")))
     return deduped, {
         "duplicates_merged": duplicate_count,
         "shared_credit_card_duplicates_merged": shared_credit_card_duplicates,
-        "dedupe_keys": len(by_key),
+        "cross_source_credit_card_repayments_merged": cross_source_repayments,
+        "dedupe_keys": len(deduped),
     }
 
 
@@ -73,13 +76,104 @@ def _icbc_credit_card_line_key(transaction: dict[str, Any]) -> str:
     )
 
 
+def _merge_cross_source_credit_card_repayments(
+    transactions: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    removed: set[int] = set()
+    merged_count = 0
+    for anchor_index, anchor in enumerate(transactions):
+        card_tails = _credit_card_repayment_tails(anchor)
+        if not card_tails or anchor_index in removed:
+            continue
+        candidates = [
+            (index, candidate)
+            for index, candidate in enumerate(transactions)
+            if index != anchor_index
+            and index not in removed
+            and _repayment_event_key(candidate) == _repayment_event_key(anchor)
+            and _icbc_credit_line_card_tail(candidate) in card_tails
+        ]
+        if len(candidates) != 1:
+            continue
+        candidate_index, candidate = candidates[0]
+        merged = _merge_transactions(candidate, anchor)
+        anchor_raw = anchor.get("raw_record")
+        anchor_raw_line = str(anchor_raw.get("raw_line") or "") if isinstance(anchor_raw, dict) else ""
+        merged["summary"] = str(anchor.get("summary") or anchor_raw_line)
+        merged["cross_source_event"] = "credit_card_repayment"
+        merged["merged_raw_records"] = [candidate.get("raw_record"), anchor.get("raw_record")]
+        ignored_warnings = {
+            "conflict_transaction_time",
+            "conflict_posting_date",
+            "conflict_summary",
+            "conflict_currency",
+            "missing_account_tail",
+        }
+        merged["warnings"] = [
+            warning for warning in merged.get("warnings", []) if warning not in ignored_warnings
+        ]
+        transactions[candidate_index] = merged
+        removed.add(anchor_index)
+        merged_count += 1
+    return [item for index, item in enumerate(transactions) if index not in removed], merged_count
+
+
+def _credit_card_repayment_tails(transaction: dict[str, Any]) -> set[str]:
+    if transaction.get("bank_key") != "icbc" or transaction.get("direction") != "inflow":
+        return set()
+    source_types = {str(item.get("source_type", "")) for item in transaction.get("source_records", [])}
+    if "email_body" not in source_types:
+        return set()
+    raw_record = transaction.get("raw_record")
+    text = " ".join(
+        [
+            str(transaction.get("summary") or ""),
+            str(raw_record.get("raw_line") or "") if isinstance(raw_record, dict) else "",
+        ]
+    )
+    if "信用卡还款" not in text and not ("还款" in text and "存入" in text):
+        return set()
+    return {
+        value
+        for value in re.findall(r"(?<!\d)(\d{4})(?!\d)", text)
+        if not 1900 <= int(value) <= 2099
+    }
+
+
+def _icbc_credit_line_card_tail(transaction: dict[str, Any]) -> str:
+    if transaction.get("bank_key") != "icbc" or transaction.get("direction") != "inflow":
+        return ""
+    source_types = {str(item.get("source_type", "")) for item in transaction.get("source_records", [])}
+    if not any(source_type.startswith("email_attachment_pdf") for source_type in source_types):
+        return ""
+    raw_record = transaction.get("raw_record")
+    raw_line = str(raw_record.get("line", "")) if isinstance(raw_record, dict) else ""
+    tokens = raw_line.split()
+    if len(tokens) < 3 or tokens[2] not in {"借", "贷"}:
+        return ""
+    digits = re.sub(r"\D", "", tokens[1])
+    return digits[-4:] if len(digits) >= 4 else ""
+
+
+def _repayment_event_key(transaction: dict[str, Any]) -> tuple[str, str, str, str]:
+    event_date = str(transaction.get("transaction_time") or transaction.get("posting_date") or "")[:10]
+    return (
+        str(transaction.get("bank_key") or ""),
+        event_date,
+        str(transaction.get("direction") or ""),
+        str(transaction.get("amount") or ""),
+    )
+
+
 def _merge_transactions(existing: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
     merged = dict(existing)
     merged_ids = list(merged.get("merged_transaction_ids", []))
     for record in (existing, incoming):
-        record_id = str(record.get("transaction_id", ""))
-        if record_id and record_id not in merged_ids:
-            merged_ids.append(record_id)
+        source_ids = record.get("merged_transaction_ids", []) or [record.get("transaction_id", "")]
+        for source_id in source_ids:
+            source_id = str(source_id)
+            if source_id and source_id not in merged_ids:
+                merged_ids.append(source_id)
     merged["merged_transaction_ids"] = merged_ids
     account_tails = sorted(
         {

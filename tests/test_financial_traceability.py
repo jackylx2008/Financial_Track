@@ -80,6 +80,57 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertTrue(records[0]["shared_credit_account"])
         self.assertEqual(len(records[0]["source_records"]), 2)
 
+    def test_icbc_repayment_merges_email_summary_with_shared_card_pdfs(self) -> None:
+        pdf_common = {
+            "bank_key": "icbc",
+            "bank_name": "工商银行",
+            "transaction_time": "2015-08-09 13:56:19",
+            "posting_date": "2015-08-09",
+            "direction": "inflow",
+            "amount": "2104.81",
+            "summary": "支付机构",
+            "raw_record": {
+                "line": "13:56:19 6225970000005670 贷 人民币 2,104.81 人民币 2,104.81 0.00 支付机构"
+            },
+        }
+        pdf_a = make_transaction(
+            **pdf_common,
+            account_tail="2481",
+            source_records=[{"source_type": "email_attachment_pdf", "source_file": "card-a.pdf"}],
+        )
+        pdf_b = make_transaction(
+            **pdf_common,
+            account_tail="0789",
+            source_records=[{"source_type": "email_attachment_pdf", "source_file": "card-b.pdf"}],
+        )
+        repayment_summary = (
+            "5670 2015-08-09 2015-08-09 信用卡还款 牡丹卡中心 "
+            "2,104.81/RMB 2,104.81/RMB(存入)"
+        )
+        email = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            transaction_time="2015-08-09",
+            direction="inflow",
+            amount="2104.81",
+            summary=repayment_summary,
+            source_records=[{"source_type": "email_body", "source_file": "repayment.eml"}],
+            raw_record={"raw_line": repayment_summary},
+        )
+
+        records, stats = dedupe_transactions([email, pdf_a, pdf_b])
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(stats["shared_credit_card_duplicates_merged"], 1)
+        self.assertEqual(stats["cross_source_credit_card_repayments_merged"], 1)
+        self.assertEqual(records[0]["summary"], repayment_summary)
+        self.assertEqual(records[0]["transaction_time"], "2015-08-09 13:56:19")
+        self.assertEqual(records[0]["account_tails"], ["0789", "2481"])
+        self.assertEqual(len(records[0]["source_records"]), 3)
+        self.assertEqual(len(records[0]["merged_transaction_ids"]), 3)
+        self.assertEqual(records[0]["cross_source_event"], "credit_card_repayment")
+        self.assertNotIn("missing_account_tail", records[0]["warnings"])
+
     def test_order_duplicates_prefer_more_complete_record(self) -> None:
         partial = {
             "platform": "pdd",

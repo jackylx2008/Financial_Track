@@ -459,6 +459,9 @@ processed_data/normalized/email_normalization_unresolved.json
 同一工商银行共享额度信用卡账户可能为不同卡尾号分别生成账单；当交易日期和信用卡 PDF 原始交易行完全一致时，
 归一化层将其合并为一笔交易，同时在 `account_tails` 中保留全部相关卡尾号和两份来源定位。仅凭金额或商户相同
 不会触发跨卡合并。
+信用卡还款还可能同时出现在邮件正文和上述两份 PDF 中。只有邮件明确包含信用卡还款语义，且银行、日期、方向、
+金额以及邮件中的交易卡尾号与 PDF 原始交易行全部吻合时才跨来源合并；合并记录保留 PDF 的精确时间和相关卡尾号，
+摘要优先使用邮件中的完整“信用卡还款”信息，并保留邮件与全部附件来源。
 首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
 未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由

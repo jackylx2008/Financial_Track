@@ -44,6 +44,7 @@ def build_quality_report(
         f"- 去重后流水数：{len(transactions)}",
         f"- 合并重复数：{dedupe_stats.get('duplicates_merged', 0)}",
         f"- 共享额度信用卡跨卡合并数：{dedupe_stats.get('shared_credit_card_duplicates_merged', 0)}",
+        f"- 信用卡还款跨来源合并数：{dedupe_stats.get('cross_source_credit_card_repayments_merged', 0)}",
         f"- 缺金额数：{missing_amount}",
         f"- 缺方向数：{missing_direction}",
         f"- 缺交易时间数：{missing_time}",
