@@ -16,6 +16,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
 from flows.gui.normalization_results import load_unresolved_files
+from flows.gui.review_file_server import ReviewFileServer
 from flows.gui.workflows import (
     FieldSpec,
     WorkflowSpec,
@@ -145,7 +146,7 @@ class WorkflowPanel(ttk.Frame):
         if not path.is_file():
             messagebox.showinfo("审核文件尚未生成", "请先执行自动归一化。", parent=self)
             return
-        webbrowser.open(path.resolve().as_uri())
+        self.app.open_review_html(path)
 
     def _build_field(self, parent: ttk.LabelFrame, field: FieldSpec, row: int, column: int) -> None:
         container = ttk.Frame(parent, padding=(4, 3))
@@ -311,6 +312,7 @@ class FinancialTrackApp:
         self.active_panel: WorkflowPanel | None = None
         self.started_at: float | None = None
         self.closing = False
+        self.review_server: ReviewFileServer | None = None
 
         self.status_var = tk.StringVar(value="就绪")
         self.current_var = tk.StringVar(value="当前对象：—")
@@ -520,6 +522,7 @@ class FinancialTrackApp:
         except Empty:
             pass
         if self.closing and not self.runner.running:
+            self._close_review_server()
             self.root.destroy()
             return
         self.root.after(100, self._poll_events)
@@ -597,8 +600,22 @@ class FinancialTrackApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
+    def open_review_html(self, path: Path) -> None:
+        if self.review_server is not None:
+            self.review_server.close()
+        self.review_server = ReviewFileServer(path, self.project_root / "raw_data")
+        url = self.review_server.start()
+        webbrowser.open(url)
+        self.append_log("已打开审核 HTML；来源文件链接将调用本机默认程序。", "success")
+
+    def _close_review_server(self) -> None:
+        if self.review_server is not None:
+            self.review_server.close()
+            self.review_server = None
+
     def on_close(self) -> None:
         if not self.runner.running:
+            self._close_review_server()
             self.root.destroy()
             return
         if not messagebox.askyesno(

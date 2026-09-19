@@ -13,6 +13,11 @@ from flows.modules.bank_transaction_filter import filter_transactions
 from flows.modules.bank_transaction_full_review_html import write_full_review_html
 from flows.modules.bank_transaction_quality_report import build_quality_report
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
+from flows.modules.transaction_traceability import (
+    apply_record_traceability,
+    enrich_bank_source_provenance,
+    write_history,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -41,6 +46,20 @@ def run(
     report_path = output_path / "bank_transactions_quality_report.md"
     full_review_html_path = output_path / "bank_transactions_full_review.html"
     unresolved_path = output_path / "email_normalization_unresolved.json"
+    history_path = output_path / "bank_transactions_history.jsonl"
+    previous_transactions = _read_jsonl(jsonl_path)
+    source_hash_stats = enrich_bank_source_provenance(
+        deduped_transactions,
+        ctx.project_root,
+        email_records_file,
+        attachment_manifest_file,
+    )
+    trace_stats, superseded = apply_record_traceability(
+        deduped_transactions,
+        previous_transactions,
+        "transaction_id",
+    )
+    history_added = write_history(history_path, superseded, "transaction_id")
 
     with jsonl_path.open("w", encoding="utf-8") as file:
         for transaction in deduped_transactions:
@@ -87,7 +106,17 @@ def run(
         "full_review_html": full_review_html,
         "unresolved_files": len(unresolved_files),
         "unresolved_file_list": str(unresolved_path),
+        "history": str(history_path),
+        "history_records_added": history_added,
+        "source_hashes": source_hash_stats,
+        "traceability": trace_stats,
         "ai_fallback": ai_fallback.stats(),
     }
     logger.info("Finished bank transaction consolidation: %s", summary)
     return summary
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]

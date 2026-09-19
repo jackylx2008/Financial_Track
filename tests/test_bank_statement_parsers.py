@@ -12,7 +12,10 @@ from openpyxl import Workbook
 from flows.modules.bank_email_parsers import parse_bank_email
 from flows.modules.bank_transaction_filter import filter_transactions
 from flows.modules.bank_transaction_full_review_html import write_full_review_html
-from flows.modules.financial_attachment_reader import read_attachment_transactions
+from flows.modules.financial_attachment_reader import (
+    _parse_icbc_pdf_line,
+    read_attachment_transactions,
+)
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
 from flows.modules.llamacpp_client import LlamaCppClient
 
@@ -48,6 +51,73 @@ class BankEmailParserTests(unittest.TestCase):
 
 
 class AttachmentParserTests(unittest.TestCase):
+    def test_icbc_debit_account_pdf_uses_signed_transaction_amount(self) -> None:
+        row = _parse_icbc_pdf_line(
+            date="2018-03-30",
+            detail_line=(
+                "09:01:24 0200214201022415827 活期 00000 人民币 钞 "
+                "消费 1202 -10,000.00 7,378.00 示例商户 6222000012345678 POS交易"
+            ),
+            account_tail="6993",
+            account_full_name="6212260200141026993",
+            path=Path("statement.pdf"),
+            manifest_item={"bank_key": "icbc"},
+            page_hint="1",
+        )
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["amount"], "10000.00")
+        self.assertEqual(row["signed_amount"], "-10000.00")
+        self.assertEqual(row["balance"], "7378.00")
+        self.assertEqual(row["direction"], "outflow")
+        self.assertEqual(row["merchant"], "示例商户")
+        self.assertEqual(row["counterparty"], "示例商户")
+        self.assertEqual(row["counterparty_account"], "6222000012345678")
+        self.assertEqual(row["channel"], "POS交易")
+
+    def test_icbc_credit_card_pdf_uses_transaction_amount_not_balance(self) -> None:
+        row = _parse_icbc_pdf_line(
+            date="2015-07-15",
+            detail_line=(
+                "14:03:55 6225970027495670 借 人民币 441.56 人民币 "
+                "441.56 -441.56 消费 示例医院"
+            ),
+            account_tail="0789",
+            account_full_name="4135200057130789",
+            path=Path("statement.pdf"),
+            manifest_item={"bank_key": "icbc"},
+            page_hint="1",
+        )
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["amount"], "441.56")
+        self.assertEqual(row["signed_amount"], "-441.56")
+        self.assertEqual(row["balance"], "-441.56")
+        self.assertEqual(row["direction"], "outflow")
+
+    def test_icbc_credit_card_pdf_uses_credit_marker_for_inflow(self) -> None:
+        row = _parse_icbc_pdf_line(
+            date="2015-08-09",
+            detail_line=(
+                "13:56:19 6225970027495670 贷 人民币 2,104.81 人民币 "
+                "2,104.81 0.00 转账 示例支付机构"
+            ),
+            account_tail="0789",
+            account_full_name="4135200057130789",
+            path=Path("statement.pdf"),
+            manifest_item={"bank_key": "icbc"},
+            page_hint="1",
+        )
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["amount"], "2104.81")
+        self.assertEqual(row["signed_amount"], "2104.81")
+        self.assertEqual(row["balance"], "0.00")
+        self.assertEqual(row["direction"], "inflow")
+
     def test_parses_generic_bank_csv_and_filters_total_row(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -75,8 +145,21 @@ class AttachmentParserTests(unittest.TestCase):
             xlsx_path = root / "statement.xlsx"
             book = Workbook()
             sheet = book.active
-            sheet.append(["交易日期", "支出金额", "收入金额", "交易对方", "账号"])
-            sheet.append(["20260902", "10.25", "", "示例商户", "6227000000005678"])
+            sheet.append(
+                ["交易日期", "支出金额", "收入金额", "对方户名", "对方账号", "账号", "交易渠道", "业务类型"]
+            )
+            sheet.append(
+                [
+                    "20260902",
+                    "10.25",
+                    "",
+                    "示例商户",
+                    "6217000000001234",
+                    "6227000000005678",
+                    "手机银行",
+                    "转账",
+                ]
+            )
             book.save(xlsx_path)
             manifest = root / "manifest.json"
             manifest.write_text(
@@ -90,6 +173,10 @@ class AttachmentParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["direction"], "outflow")
         self.assertEqual(rows[0]["account_tail"], "5678")
         self.assertEqual(rows[0]["account_full_name"], "6227000000005678")
+        self.assertEqual(rows[0]["merchant"], "示例商户")
+        self.assertEqual(rows[0]["counterparty_account"], "6217000000001234")
+        self.assertEqual(rows[0]["channel"], "手机银行")
+        self.assertEqual(rows[0]["transaction_type"], "转账")
 
     def test_reports_attachment_without_automatic_transactions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -145,9 +232,11 @@ class FilteringAndReviewTests(unittest.TestCase):
             "direction": "outflow",
             "amount": "5200.25",
             "currency": "CNY",
+            "account_full_name": "6217000010195331270",
             "account_tail": "1234",
             "merchant": "完整商户名称",
             "counterparty": "完整交易对方",
+            "counterparty_account": "6227000000005678",
             "summary": "完整且不脱敏的交易摘要",
             "balance": "8000.00",
             "channel": "网上银行",
@@ -165,17 +254,29 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertEqual(result["transactions"], 1)
         for filter_id in (
             "institutionFilter",
+            "tailFilter",
             "dateFrom",
             "dateTo",
             "directionFilter",
             "amountFilter",
-            "accountFilter",
+            "currencyFilter",
             "merchantFilter",
+            "summaryFilter",
+            "channelFilter",
+            "accountFilter",
+            "typeFilter",
             "sourceFilter",
         ):
             self.assertIn(f'id="{filter_id}"', html)
-        self.assertIn("完整账户名称", html)
-        self.assertIn("完整商户名称", html)
+        self.assertNotIn(">月份<", html)
+        self.assertNotIn(">账户全名<", html)
+        self.assertIn("建设银行借记卡", html)
+        self.assertIn("完整商户名称 / 完整交易对方", html)
+        self.assertIn("6227000000005678", html)
+        self.assertIn("商户/对方全名", html)
+        self.assertIn("对方账号", html)
+        self.assertIn("交易类型", html)
+        self.assertIn("openSource", html)
         self.assertIn("完整且不脱敏的交易摘要", html)
         self.assertIn("5200.25", html)
         self.assertIn('value="5000-10000"', html)

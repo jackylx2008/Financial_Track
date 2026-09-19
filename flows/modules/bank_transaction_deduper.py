@@ -53,9 +53,11 @@ def _merge_transactions(existing: dict[str, Any], incoming: dict[str, Any]) -> d
         "posting_date",
         "merchant",
         "counterparty",
+        "counterparty_account",
         "summary",
         "balance",
         "channel",
+        "transaction_type",
         "transaction_reference",
     ]:
         if not merged.get(field) and incoming.get(field):

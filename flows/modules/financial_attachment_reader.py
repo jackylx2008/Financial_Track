@@ -260,13 +260,27 @@ def _parse_icbc_pdf_line(
     tokens = detail_line.split()
     if len(tokens) < 8:
         return None
+    if tokens[2] in {"借", "贷"}:
+        return _parse_icbc_credit_card_line(
+            date,
+            tokens,
+            account_tail,
+            account_full_name,
+            path,
+            manifest_item,
+            page_hint,
+            detail_line,
+        )
     amount_index = next((idx for idx, token in enumerate(tokens) if SIGNED_AMOUNT_RE.match(token)), -1)
     if amount_index < 0:
         return None
     amount = tokens[amount_index]
     balance = tokens[amount_index + 1] if amount_index + 1 < len(tokens) else ""
     summary_tokens = tokens[6 : max(6, amount_index - 1)]
-    counterparty = " ".join(tokens[amount_index + 2 :])
+    trailing_fields = tokens[amount_index + 2 :]
+    counterparty = trailing_fields[0] if trailing_fields else ""
+    counterparty_account = trailing_fields[1] if len(trailing_fields) >= 2 else ""
+    channel = trailing_fields[-1] if len(trailing_fields) >= 3 else tokens[amount_index - 1]
     return make_transaction(
         bank_key=str(manifest_item.get("bank_key", "icbc") or "icbc"),
         bank_name="工商银行",
@@ -278,7 +292,10 @@ def _parse_icbc_pdf_line(
         summary=" ".join(summary_tokens),
         balance=balance,
         counterparty=counterparty,
-        channel=tokens[amount_index - 1] if amount_index >= 1 else "",
+        merchant=counterparty,
+        counterparty_account=counterparty_account,
+        channel=channel,
+        transaction_type=tokens[amount_index - 1] if amount_index >= 1 else "",
         source_records=[
             {
                 "source_type": "email_attachment_pdf",
@@ -289,6 +306,57 @@ def _parse_icbc_pdf_line(
             }
         ],
         confidence=0.82,
+        raw_record={"line": detail_line},
+    )
+
+
+def _parse_icbc_credit_card_line(
+    date: str,
+    tokens: list[str],
+    account_tail: str,
+    account_full_name: str,
+    path: Path,
+    manifest_item: dict[str, Any],
+    page_hint: str,
+    detail_line: str,
+) -> dict[str, Any] | None:
+    """解析工行信用卡明细，避免把带符号的账户余额当作交易金额。"""
+    if len(tokens) < 8:
+        return None
+    transaction_amount = parse_money_token(tokens[4])
+    posting_amount = parse_money_token(tokens[6])
+    balance = parse_money_token(tokens[7])
+    amount = transaction_amount or posting_amount
+    if not amount:
+        return None
+    direction = "outflow" if tokens[2] == "借" else "inflow"
+    summary = tokens[8] if len(tokens) > 8 else ""
+    counterparty = " ".join(tokens[9:])
+    return make_transaction(
+        bank_key=str(manifest_item.get("bank_key", "icbc") or "icbc"),
+        bank_name="工商银行",
+        account_full_name=account_full_name,
+        account_tail=account_tail,
+        transaction_time=f"{date} {tokens[0]}",
+        posting_date=date,
+        direction=direction,
+        amount=amount,
+        currency=tokens[3],
+        merchant=counterparty,
+        counterparty=counterparty,
+        summary=summary,
+        balance=balance,
+        transaction_type=tokens[2],
+        source_records=[
+            {
+                "source_type": "email_attachment_pdf",
+                "source_file": str(path),
+                "message_uid": manifest_item.get("message_uid", ""),
+                "message_id": manifest_item.get("message_id", ""),
+                "page": page_hint,
+            }
+        ],
+        confidence=0.9,
         raw_record={"line": detail_line},
     )
 
@@ -397,8 +465,32 @@ def _read_generic_bank_rows(
             continue
         if direction == "unknown":
             direction = "outflow" if amount.startswith("-") else "inflow" if amount.startswith("+") else "unknown"
-        summary = _first_value(row, "摘要", "交易摘要", "交易类型", "业务类型", "备注", "附言")
-        counterparty = _first_value(row, "交易对方", "对方户名", "对方账号与户名", "收款方", "付款方")
+        transaction_type = _first_value(row, "交易类型", "业务类型", "交易种类", "业务种类", "交易类别")
+        summary = _first_value(row, "摘要", "交易摘要", "备注", "附言") or transaction_type
+        combined_counterparty = _first_value(row, "对方账号与户名", "对方户名与账号")
+        combined_name, combined_account = _split_counterparty(combined_counterparty)
+        counterparty = _first_value(
+            row,
+            "交易对方",
+            "对方户名",
+            "对方名称",
+            "收款方",
+            "收款方户名",
+            "付款方",
+            "付款方户名",
+        ) or combined_name
+        counterparty_account = _first_value(
+            row,
+            "对方账号",
+            "对方账户",
+            "对方卡号",
+            "收款账号",
+            "收款方账号",
+            "付款账号",
+            "付款方账号",
+        ) or combined_account
+        if not counterparty and combined_counterparty:
+            counterparty = combined_counterparty
         merchant = _first_value(row, "商户名称", "商户", "交易商户") or counterparty
         account_full_name = _first_value(row, "账户名称", "户名", "本方户名")
         account_number = _first_value(row, "卡号", "账号", "卡号/账号", "本方账号")
@@ -426,9 +518,21 @@ def _read_generic_bank_rows(
                 currency=_first_value(row, "币种", "货币") or "CNY",
                 merchant=merchant,
                 counterparty=counterparty,
+                counterparty_account=counterparty_account,
                 summary=summary,
                 balance=_clean_money(_first_value(row, "账户余额", "余额")),
-                channel=_first_value(row, "交易渠道", "渠道", "交易地点/附言"),
+                channel=_first_value(
+                    row,
+                    "交易渠道",
+                    "渠道",
+                    "交易渠道名称",
+                    "交易场所",
+                    "交易地点",
+                    "交易地点/附言",
+                    "交易网点",
+                    "交易机构",
+                ),
+                transaction_type=transaction_type,
                 transaction_reference=_first_value(row, "流水号", "交易流水号", "参考号", "交易序号"),
                 source_records=[source],
                 confidence=0.9,
@@ -532,6 +636,18 @@ def _first_value(row: dict[str, str], *aliases: str) -> str:
         if alias in normalized and normalized[alias]:
             return normalized[alias]
     return ""
+
+
+def _split_counterparty(value: str) -> tuple[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return "", ""
+    account_match = re.search(r"(?<!\d)(?:\d[\d*\s-]{5,}\d|\*{4,}\d{2,})(?!\d)", text)
+    if not account_match:
+        return text, ""
+    account = re.sub(r"[\s-]", "", account_match.group(0))
+    name = (text[: account_match.start()] + " " + text[account_match.end() :]).strip(" /,，;；")
+    return re.sub(r"\s+", " ", name), account
 
 
 def _is_non_transaction_row(row: dict[str, str], amount: str) -> bool:

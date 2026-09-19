@@ -445,6 +445,7 @@ processed_data/normalized/bank_transactions.jsonl
 processed_data/normalized/bank_transactions.json
 processed_data/normalized/bank_transactions_quality_report.md
 processed_data/normalized/bank_transactions_full_review.html
+processed_data/normalized/bank_transactions_history.jsonl
 processed_data/normalized/email_normalization_unresolved.json
 ```
 
@@ -453,13 +454,24 @@ processed_data/normalized/email_normalization_unresolved.json
 邮件正文优先使用工商、招商、建设银行专用规则；附件按 PDF、XLS/XLSX、CSV 分派解析。余额、额度、
 本期应还和合计行会在去重前过滤。只有确定性解析器无法识别文档时，才会按
 `financial_document_ai_fallback` 配置调用本地 AI；PDF 文本解析仍无结果时可直接渲染页面并调用视觉接口 OCR。
+工商银行 PDF 会区分借记账户和信用卡版式：借记账户使用带 `+/-` 的收入/支出金额；信用卡使用“借/贷”
+判断方向，并读取“交易金额”列，账户余额仅作为余额保存，不参与交易金额计算。
 首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
 未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由
 页面上的“打开审核 HTML”按钮查看。
-完整人工审核集写入 `bank_transactions_full_review.html`，包含全部归一化交易的精确金额、未脱敏摘要、
-源数据中能够取得的账户全名和商户全名，并支持机构、日期、方向、金额区间、账户、商户和来源筛选。
+完整人工审核集写入 `bank_transactions_full_review.html`，按“银行 + 卡片类型”展示机构，主表包含卡号尾号、
+交易/入账日期、方向、精确金额、币种、统一后的商户/对方全名、对方账号、交易类型、未脱敏摘要、渠道和来源定位。
+页面支持上述字段、日期范围及金额区间筛选；账户全名不再显示。通过 GUI 的“打开审核 HTML”进入页面后，来源
+PDF、Excel、CSV 或邮件文件可以点击并交给本机默认程序打开；本地桥接只监听回环地址，使用随机会话令牌，
+且只允许访问项目 `raw_data/` 下的文件。
 完整审核集含个人财务信息，只能保存在被 Git 忽略的 `processed_data/` 中。
+
+每条归一化流水还保存完整追溯信息：来源记录中的原始 EML、原始加密附件、解密后解析文件等均记录
+64 位 SHA-256；`record_fingerprint_sha256` 是归一化记录的完整规范化指纹；`record_version`、
+`supersedes_record_ids` 和 `supersedes_record_fingerprints_sha256` 连接修正前后的版本。被替代的旧版本
+追加保存在 `bank_transactions_history.jsonl` 或 `financial_transactions_history.jsonl`，原有 PDF 页码、
+Excel/CSV 行号、工作表和邮件 UID 定位字段继续保留。
 
 ## 归一化、账本与人工校核
 
@@ -475,6 +487,7 @@ python flows/normalize_transactions.py
 processed_data/normalized/bank_transactions.jsonl
 processed_data/normalized/orders.jsonl
 processed_data/normalized/financial_transactions.jsonl
+processed_data/normalized/financial_transactions_history.jsonl
 processed_data/normalized/financial_transaction_links.jsonl
 processed_data/normalized/normalized_quality_report.md
 ```

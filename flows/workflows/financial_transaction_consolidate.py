@@ -12,6 +12,11 @@ from flows.modules.financial_transaction_schema import (
     bank_transaction_to_fact,
     order_to_fact,
 )
+from flows.modules.transaction_traceability import (
+    apply_record_traceability,
+    enrich_source_file_hashes,
+    write_history,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +31,8 @@ def run(
     output_path = ctx.resolve_path(output_dir)
     bank_path = ctx.resolve_path(bank_transactions_path or output_path / "bank_transactions.jsonl")
     order_path = ctx.resolve_path(orders_path or output_path / "orders.jsonl")
+    facts_jsonl = output_path / "financial_transactions.jsonl"
+    previous_facts = _read_jsonl(facts_jsonl)
 
     bank_transactions = _read_jsonl(bank_path)
     orders = _read_jsonl(order_path)
@@ -40,11 +47,18 @@ def run(
         key=lambda item: (item.get("occurrence_time", ""), item.get("fact_type", ""), item.get("amount", "")),
     )
 
-    facts_jsonl = output_path / "financial_transactions.jsonl"
     facts_json = output_path / "financial_transactions.json"
     links_jsonl = output_path / "financial_transaction_links.jsonl"
     links_json = output_path / "financial_transaction_links.json"
     report_path = output_path / "financial_transactions_quality_report.md"
+    history_path = output_path / "financial_transactions_history.jsonl"
+    source_hash_stats = enrich_source_file_hashes(facts, ctx.project_root)
+    trace_stats, superseded = apply_record_traceability(
+        facts,
+        previous_facts,
+        "financial_transaction_id",
+    )
+    history_added = write_history(history_path, superseded, "financial_transaction_id")
 
     _write_jsonl(facts_jsonl, facts)
     facts_json.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -71,6 +85,10 @@ def run(
         "links_jsonl": str(links_jsonl),
         "links_json": str(links_json),
         "quality_report": str(report_path),
+        "history": str(history_path),
+        "history_records_added": history_added,
+        "source_hashes": source_hash_stats,
+        "traceability": trace_stats,
         "link_stats": link_stats,
     }
     logger.info("Finished financial transaction consolidation: %s", summary)

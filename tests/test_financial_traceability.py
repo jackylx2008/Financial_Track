@@ -1,10 +1,19 @@
 from __future__ import annotations
 
 import unittest
+import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from flows.modules.bank_transaction_deduper import dedupe_transactions
 from flows.modules.financial_transaction_linker import link_orders_to_payments
 from flows.modules.order_deduper import dedupe_orders
+from flows.modules.transaction_traceability import (
+    apply_record_traceability,
+    enrich_bank_source_provenance,
+    enrich_source_file_hashes,
+    sha256_file,
+)
 
 
 class FinancialTraceabilityTests(unittest.TestCase):
@@ -90,6 +99,79 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(links[0]["match_strength"], "linked")
         self.assertIn("amount_exact", links[0]["evidence"])
         self.assertIn("same_day", links[0]["evidence"])
+
+    def test_source_file_receives_full_sha256_without_losing_location(self) -> None:
+        with TemporaryDirectory() as temporary:
+            source = Path(temporary) / "statement.pdf"
+            source.write_bytes(b"demo statement")
+            records = [{"source_records": [{"source_file": str(source), "page": 3, "row": 8}]}]
+
+            stats = enrich_source_file_hashes(records, Path(temporary))
+
+            self.assertEqual(stats["source_files_hashed"], 1)
+            self.assertEqual(records[0]["source_records"][0]["source_file_sha256"], sha256_file(source))
+            self.assertEqual(len(records[0]["source_records"][0]["source_file_sha256"]), 64)
+            self.assertEqual(records[0]["source_records"][0]["page"], 3)
+            self.assertEqual(records[0]["source_records"][0]["row"], 8)
+
+    def test_corrected_record_links_to_previous_version(self) -> None:
+        previous = {
+            "transaction_id": "bank_tx_old",
+            "amount": "10.00",
+            "source_records": [{"source_file": "statement.pdf", "page": 1}],
+            "raw_record": {"line": "raw transaction line"},
+        }
+        apply_record_traceability([previous], [], "transaction_id")
+        corrected = {
+            "transaction_id": "bank_tx_new",
+            "amount": "12.00",
+            "source_records": [{"source_file": "statement.pdf", "page": 1}],
+            "raw_record": {"line": "raw transaction line"},
+        }
+
+        stats, history = apply_record_traceability([corrected], [previous], "transaction_id")
+
+        self.assertEqual(stats["records_revised"], 1)
+        self.assertEqual(corrected["record_version"], 2)
+        self.assertEqual(corrected["supersedes_record_ids"], ["bank_tx_old"])
+        self.assertEqual(len(corrected["record_fingerprint_sha256"]), 64)
+        self.assertEqual(history[0]["superseded_by_record_id"], "bank_tx_new")
+
+    def test_bank_source_provenance_hashes_email_original_and_parsed_attachment(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            email_file = root / "mail.eml"
+            original = root / "encrypted.zip"
+            parsed = root / "statement.pdf"
+            email_file.write_bytes(b"email")
+            original.write_bytes(b"encrypted attachment")
+            parsed.write_bytes(b"decrypted statement")
+            email_records = root / "records.jsonl"
+            email_records.write_text(
+                json.dumps({"message_uid": "7", "source_file": str(email_file)}) + "\n",
+                encoding="utf-8",
+            )
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps([{"path": str(original), "output_files": [str(parsed)]}]),
+                encoding="utf-8",
+            )
+            records = [
+                {
+                    "source_records": [
+                        {"source_file": str(parsed), "message_uid": "7", "page": 2}
+                    ]
+                }
+            ]
+
+            stats = enrich_bank_source_provenance(records, root, email_records, manifest)
+            source = records[0]["source_records"][0]
+
+            self.assertEqual(stats["source_files_hashed"], 3)
+            self.assertEqual(source["source_file_sha256"], sha256_file(parsed))
+            self.assertEqual(source["original_attachment_file_sha256"], sha256_file(original))
+            self.assertEqual(source["email_source_file_sha256"], sha256_file(email_file))
+            self.assertEqual(source["page"], 2)
 
 
 if __name__ == "__main__":
