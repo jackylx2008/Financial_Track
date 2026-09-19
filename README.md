@@ -456,6 +456,9 @@ processed_data/normalized/email_normalization_unresolved.json
 `financial_document_ai_fallback` 配置调用本地 AI；PDF 文本解析仍无结果时可直接渲染页面并调用视觉接口 OCR。
 工商银行 PDF 会区分借记账户和信用卡版式：借记账户使用带 `+/-` 的收入/支出金额；信用卡使用“借/贷”
 判断方向，并读取“交易金额”列，账户余额仅作为余额保存，不参与交易金额计算。
+同一工商银行共享额度信用卡账户可能为不同卡尾号分别生成账单；当交易日期和信用卡 PDF 原始交易行完全一致时，
+归一化层将其合并为一笔交易，同时在 `account_tails` 中保留全部相关卡尾号和两份来源定位。仅凭金额或商户相同
+不会触发跨卡合并。
 首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
 未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由

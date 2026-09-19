@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from flows.modules.bank_transaction_deduper import dedupe_transactions
+from flows.modules.bank_transaction_schema import make_transaction
 from flows.modules.financial_transaction_linker import link_orders_to_payments
 from flows.modules.order_deduper import dedupe_orders
 from flows.modules.transaction_traceability import (
@@ -40,6 +41,44 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(len(records[0]["source_records"]), 2)
         self.assertTrue(records[0]["transaction_id"].startswith("bank_tx_"))
+
+    def test_icbc_shared_credit_cards_merge_identical_statement_lines(self) -> None:
+        common = {
+            "bank_key": "icbc",
+            "bank_name": "工商银行",
+            "transaction_time": "2015-07-15 14:03:55",
+            "posting_date": "2015-07-15",
+            "direction": "outflow",
+            "amount": "441.56",
+            "merchant": "示例医院",
+            "counterparty": "示例医院",
+            "summary": "消费",
+            "raw_record": {
+                "line": "14:03:55 6225970000005670 借 人民币 441.56 人民币 441.56 -441.56 消费 示例医院"
+            },
+        }
+        first = make_transaction(
+            **common,
+            account_full_name="shared-account-a",
+            account_tail="2481",
+            source_records=[{"source_file": "card-a.pdf"}],
+        )
+        second = make_transaction(
+            **common,
+            account_full_name="shared-account-b",
+            account_tail="0789",
+            source_records=[{"source_file": "card-b.pdf"}],
+        )
+
+        records, stats = dedupe_transactions([first, second])
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(stats["shared_credit_card_duplicates_merged"], 1)
+        self.assertEqual(records[0]["account_tails"], ["0789", "2481"])
+        self.assertEqual(records[0]["account_full_names"], ["shared-account-a", "shared-account-b"])
+        self.assertEqual(records[0]["account_key"], "icbc:shared:0789,2481")
+        self.assertTrue(records[0]["shared_credit_account"])
+        self.assertEqual(len(records[0]["source_records"]), 2)
 
     def test_order_duplicates_prefer_more_complete_record(self) -> None:
         partial = {
@@ -136,6 +175,45 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(corrected["supersedes_record_ids"], ["bank_tx_old"])
         self.assertEqual(len(corrected["record_fingerprint_sha256"]), 64)
         self.assertEqual(history[0]["superseded_by_record_id"], "bank_tx_new")
+
+    def test_merged_record_supersedes_both_previous_transactions(self) -> None:
+        previous = [
+            {
+                "transaction_id": "bank_tx_card_a",
+                "amount": "10.00",
+                "source_records": [{"source_file": "card-a.pdf"}],
+                "raw_record": {"line": "same transaction"},
+            },
+            {
+                "transaction_id": "bank_tx_card_b",
+                "amount": "10.00",
+                "source_records": [{"source_file": "card-b.pdf"}],
+                "raw_record": {"line": "same transaction"},
+            },
+        ]
+        for item in previous:
+            apply_record_traceability([item], [], "transaction_id")
+        merged = {
+            "transaction_id": "bank_tx_shared",
+            "merged_transaction_ids": ["bank_tx_card_a", "bank_tx_card_b"],
+            "amount": "10.00",
+            "source_records": [
+                {"source_file": "card-a.pdf"},
+                {"source_file": "card-b.pdf"},
+            ],
+            "raw_record": {"line": "same transaction"},
+        }
+
+        stats, history = apply_record_traceability([merged], previous, "transaction_id")
+
+        self.assertEqual(stats["records_revised"], 1)
+        self.assertEqual(merged["record_version"], 2)
+        self.assertEqual(
+            set(merged["supersedes_record_ids"]),
+            {"bank_tx_card_a", "bank_tx_card_b"},
+        )
+        self.assertEqual(len(history), 2)
+        self.assertEqual({item["superseded_by_record_id"] for item in history}, {"bank_tx_shared"})
 
     def test_bank_source_provenance_hashes_email_original_and_parsed_attachment(self) -> None:
         with TemporaryDirectory() as temporary:

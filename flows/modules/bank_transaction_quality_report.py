@@ -43,6 +43,7 @@ def build_quality_report(
         f"- 过滤非交易记录数：{filter_stats.get('rejected', 0)}",
         f"- 去重后流水数：{len(transactions)}",
         f"- 合并重复数：{dedupe_stats.get('duplicates_merged', 0)}",
+        f"- 共享额度信用卡跨卡合并数：{dedupe_stats.get('shared_credit_card_duplicates_merged', 0)}",
         f"- 缺金额数：{missing_amount}",
         f"- 缺方向数：{missing_direction}",
         f"- 缺交易时间数：{missing_time}",

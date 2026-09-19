@@ -89,37 +89,56 @@ def apply_record_traceability(
         record_id = str(record.get(id_field, ""))
         lineage = lineage_fingerprint(record, id_field)
         fingerprint = record_fingerprint(record)
-        previous = previous_by_id.get(record_id)
-        if previous is None:
-            candidates = previous_by_lineage.get(lineage, [])
-            previous = candidates[0] if len(candidates) == 1 else None
-
-        prior_fingerprint = record_fingerprint(previous) if previous else ""
-        prior_id = str(previous.get(id_field, "")) if previous else ""
-        prior_version = int(previous.get("record_version", 1) or 1) if previous else 0
-        inherited_ids = list(previous.get("supersedes_record_ids", [])) if previous else []
-        inherited_fingerprints = (
-            list(previous.get("supersedes_record_fingerprints_sha256", [])) if previous else []
+        previous_matches: list[dict[str, Any]] = []
+        if previous_by_id.get(record_id):
+            previous_matches.append(previous_by_id[record_id])
+        merged_id_field = (
+            "merged_transaction_ids" if id_field == "transaction_id" else "merged_financial_transaction_ids"
         )
+        for merged_id in record.get(merged_id_field, []):
+            candidate = previous_by_id.get(str(merged_id))
+            if candidate is not None and candidate not in previous_matches:
+                previous_matches.append(candidate)
+        if not previous_matches:
+            candidates = previous_by_lineage.get(lineage, [])
+            if len(candidates) == 1:
+                previous_matches.append(candidates[0])
 
-        if previous and prior_fingerprint == fingerprint:
+        exact_previous = previous_by_id.get(record_id)
+        exact_fingerprint = record_fingerprint(exact_previous) if exact_previous else ""
+        prior_version = max(
+            (int(item.get("record_version", 1) or 1) for item in previous_matches),
+            default=0,
+        )
+        inherited_ids: list[str] = []
+        inherited_fingerprints: list[str] = []
+        for previous in previous_matches:
+            for value in previous.get("supersedes_record_ids", []):
+                inherited_ids = _append_unique(inherited_ids, str(value))
+            for value in previous.get("supersedes_record_fingerprints_sha256", []):
+                inherited_fingerprints = _append_unique(inherited_fingerprints, str(value))
+
+        if exact_previous and len(previous_matches) == 1 and exact_fingerprint == fingerprint:
             version = prior_version
             unchanged += 1
-        elif previous and record_id == prior_id and not previous.get("record_fingerprint_sha256"):
+        elif exact_previous and len(previous_matches) == 1 and not exact_previous.get("record_fingerprint_sha256"):
             # Schema migration: adding trace fields is not a business-data revision.
             version = prior_version
             unchanged += 1
-        elif previous:
+        elif previous_matches:
             version = prior_version + 1
-            inherited_ids = _append_unique(inherited_ids, prior_id)
-            inherited_fingerprints = _append_unique(inherited_fingerprints, prior_fingerprint)
-            historical = dict(previous)
-            historical["record_fingerprint_sha256"] = prior_fingerprint
-            historical["lineage_fingerprint_sha256"] = lineage_fingerprint(previous, id_field)
-            historical["record_version"] = prior_version
-            historical["superseded_by_record_id"] = record_id
-            historical["superseded_by_record_fingerprint_sha256"] = fingerprint
-            superseded.append(historical)
+            for previous in previous_matches:
+                prior_id = str(previous.get(id_field, ""))
+                prior_fingerprint = record_fingerprint(previous)
+                inherited_ids = _append_unique(inherited_ids, prior_id)
+                inherited_fingerprints = _append_unique(inherited_fingerprints, prior_fingerprint)
+                historical = dict(previous)
+                historical["record_fingerprint_sha256"] = prior_fingerprint
+                historical["lineage_fingerprint_sha256"] = lineage_fingerprint(previous, id_field)
+                historical["record_version"] = int(previous.get("record_version", 1) or 1)
+                historical["superseded_by_record_id"] = record_id
+                historical["superseded_by_record_fingerprint_sha256"] = fingerprint
+                superseded.append(historical)
             revised += 1
         else:
             version = 1

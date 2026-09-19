@@ -46,7 +46,7 @@ def _review_row(transaction: dict[str, Any]) -> dict[str, Any]:
         "amount": str(transaction.get("amount") or "—"),
         "amount_value": _float_value(transaction.get("amount")),
         "currency": str(transaction.get("currency") or "—"),
-        "account_tail": str(transaction.get("account_tail") or "—"),
+        "account_tail": _account_tail_display(transaction),
         "merchant": merchant,
         "counterparty_account": counterparty_account,
         "summary": str(transaction.get("summary") or "—"),
@@ -85,6 +85,13 @@ def _card_type(transaction: dict[str, Any]) -> str:
     if str(transaction.get("bank_key")) == "cmb":
         return "信用卡"
     return "未识别卡片"
+
+
+def _account_tail_display(transaction: dict[str, Any]) -> str:
+    values = [str(value) for value in transaction.get("account_tails", []) if value]
+    if not values and transaction.get("account_tail"):
+        values = [str(transaction["account_tail"])]
+    return " / ".join(dict.fromkeys(values)) or "—"
 
 
 def _unified_party_fields(transaction: dict[str, Any]) -> tuple[str, str, str, str]:

@@ -85,6 +85,13 @@ def bank_transaction_to_fact(transaction: dict[str, Any]) -> dict[str, Any]:
     )
     if direction == "unknown":
         fact["warnings"] = sorted(set(fact["warnings"] + ["unknown_money_direction"]))
+    merged_ids = [
+        stable_financial_transaction_id("bank_transaction", str(transaction_id))
+        for transaction_id in transaction.get("merged_transaction_ids", [])
+        if transaction_id
+    ]
+    if merged_ids:
+        fact["merged_financial_transaction_ids"] = merged_ids
     return fact
 
 
