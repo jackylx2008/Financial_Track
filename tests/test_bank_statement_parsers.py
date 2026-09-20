@@ -17,10 +17,43 @@ from flows.modules.financial_attachment_reader import (
     read_attachment_transactions,
 )
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
+from flows.modules.financial_email_record_reader import read_email_candidate_transactions
 from flows.modules.llamacpp_client import LlamaCppClient
 
 
 class BankEmailParserTests(unittest.TestCase):
+    def test_legacy_misclassified_icbc_statement_uses_document_identity(self) -> None:
+        body = """中国工商银行信用卡对账单
+---主卡明细---
+5670 2026-08-01 2026-08-01 消费 示例商户 88.50/RMB 88.50/RMB(支出)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            body_path = root / "statement.txt"
+            body_path.write_text(body, encoding="utf-8")
+            records_path = root / "records.jsonl"
+            records_path.write_text(
+                json.dumps(
+                    {
+                        "bank_key": "cmb",
+                        "bank_name": "招商银行",
+                        "subject": "中国工商银行客户对账单(ICBC Peony Card Bank Statement)",
+                        "body_text_file": str(body_path),
+                        "source_file": str(root / "statement.eml"),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            rows, _stats = read_email_candidate_transactions(records_path)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bank_key"], "icbc")
+        self.assertEqual(rows[0]["bank_name"], "工商银行")
+        self.assertEqual(rows[0]["card_role"], "主卡")
+
     def test_parses_icbc_notification_and_ignores_balance(self) -> None:
         text = "您尾号1234卡于2026年09月01日 08:30消费人民币88.50元，商户：示例商店，余额人民币9999.00元。"
 
@@ -41,6 +74,36 @@ class BankEmailParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["amount"], "20.00")
         self.assertEqual(rows[0]["direction"], "inflow")
 
+    def test_parses_cmb_credit_card_statement_blocks(self) -> None:
+        text = """招商银行信用卡电子账单
+2026/04/06-2026/05/05
+还款
+0406
+跨行转账还款
+¥ -200.00
+8149
+-200.00
+消费
+0430
+0501
+示例燃气缴费
+¥ 200.00
+8149
+CN
+200.00
+"""
+
+        rows = parse_bank_email("cmb", text, "2026-05-06T00:00:00+08:00")
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["direction"], "inflow")
+        self.assertEqual(rows[0]["transaction_time"], "2026-04-06")
+        self.assertEqual(rows[1]["direction"], "outflow")
+        self.assertEqual(rows[1]["posting_date"], "2026-05-01")
+        self.assertEqual(rows[1]["merchant"], "示例燃气缴费")
+        self.assertEqual(rows[1]["transaction_card_tail"], "8149")
+        self.assertEqual(rows[1]["card_type"], "信用卡")
+
     def test_supports_ccb_notification(self) -> None:
         text = "您尾号9012账户于2026-09-03 12:01支出人民币36.80元，交易对方：示例餐厅。"
 
@@ -48,6 +111,25 @@ class BankEmailParserTests(unittest.TestCase):
 
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["merchant"], "示例餐厅")
+
+    def test_icbc_monthly_statement_preserves_main_and_supplementary_cards(self) -> None:
+        text = """中国工商银行信用卡对账单
+---主卡明细---
+5670 2026-08-01 2026-08-02 POS消费 示例主卡商户 88.50/RMB 88.50/RMB(支出)
+---副卡明细---
+6943 2026-08-03 2026-08-04 消费 示例副卡商户 20.00/RMB 20.00/RMB(支出)
+"""
+
+        rows = parse_bank_email("icbc", text, "2026-09-01T09:00:00+08:00")
+
+        self.assertEqual(len(rows), 2)
+        by_tail = {row["transaction_card_tail"]: row for row in rows}
+        self.assertEqual(by_tail["5670"]["card_role"], "主卡")
+        self.assertEqual(by_tail["6943"]["card_role"], "副卡")
+        self.assertEqual(by_tail["5670"]["posting_date"], "2026-08-02")
+        self.assertEqual(by_tail["5670"]["merchant"], "示例主卡商户")
+        self.assertEqual(by_tail["5670"]["transaction_type"], "POS消费")
+        self.assertTrue(all(row["card_type"] == "信用卡" for row in rows))
 
 
 class AttachmentParserTests(unittest.TestCase):
@@ -281,6 +363,36 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn("5200.25", html)
         self.assertIn('value="5000-10000"', html)
         self.assertIn("row.source_locations", html)
+
+    def test_known_debit_banks_are_not_inferred_as_credit_cards(self) -> None:
+        transactions = [
+            {
+                "transaction_id": "bocom-1",
+                "bank_key": "bocom",
+                "bank_name": "交通银行",
+                "account_full_name": "6214920203056096",
+                "amount": "1.00",
+                "source_records": [],
+            },
+            {
+                "transaction_id": "ccb-1",
+                "bank_key": "ccb",
+                "bank_name": "建设银行",
+                "account_full_name": "6217000010195331270",
+                "summary": "信用卡还款",
+                "amount": "200.00",
+                "source_records": [],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "full-review.html"
+            write_full_review_html(transactions, path)
+            html = path.read_text(encoding="utf-8")
+
+        self.assertIn("交通银行借记卡", html)
+        self.assertIn("建设银行借记卡", html)
+        self.assertNotIn("交通银行信用卡", html)
+        self.assertNotIn("建设银行信用卡", html)
 
 
 class LocalAiFallbackTests(unittest.TestCase):

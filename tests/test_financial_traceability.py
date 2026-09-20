@@ -131,6 +131,47 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(records[0]["cross_source_event"], "credit_card_repayment")
         self.assertNotIn("missing_account_tail", records[0]["warnings"])
 
+    def test_icbc_monthly_statement_matches_printed_credit_card_flow(self) -> None:
+        pdf = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            account_tail="2481",
+            transaction_time="2026-08-01 12:30:00",
+            posting_date="2026-08-01",
+            direction="outflow",
+            amount="88.50",
+            merchant="示例商户",
+            summary="消费",
+            source_records=[{"source_type": "email_attachment_pdf", "source_file": "flow.pdf"}],
+            raw_record={"line": "12:30:00 6225970000005670 借 人民币 88.50 人民币 88.50 -88.50 消费 示例商户"},
+        )
+        email = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            transaction_time="2026-08-01",
+            posting_date="2026-08-01",
+            direction="outflow",
+            amount="88.50",
+            merchant="示例商户",
+            summary="5670 2026-08-01 2026-08-01 消费 示例商户 88.50/RMB 88.50/RMB(支出)",
+            source_records=[{"source_type": "email_body", "source_file": "monthly.eml"}],
+            raw_record={"raw_line": "5670 2026-08-01 2026-08-01 消费 示例商户 88.50/RMB 88.50/RMB(支出)"},
+        )
+        email.update(card_type="信用卡", card_role="主卡", transaction_card_tail="5670")
+
+        records, stats = dedupe_transactions([pdf, email])
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(stats["icbc_statement_transactions_matched"], 1)
+        self.assertEqual(records[0]["transaction_time"], "2026-08-01 12:30:00")
+        self.assertEqual(records[0]["card_role"], "主卡")
+        self.assertEqual(records[0]["transaction_card_tail"], "5670")
+        self.assertEqual(len(records[0]["source_records"]), 2)
+
+        rerun, rerun_stats = dedupe_transactions(records)
+        self.assertEqual(len(rerun), 1)
+        self.assertEqual(rerun_stats["icbc_statement_transactions_matched"], 0)
+
     def test_order_duplicates_prefer_more_complete_record(self) -> None:
         partial = {
             "platform": "pdd",
@@ -265,6 +306,39 @@ class FinancialTraceabilityTests(unittest.TestCase):
         )
         self.assertEqual(len(history), 2)
         self.assertEqual({item["superseded_by_record_id"] for item in history}, {"bank_tx_shared"})
+
+    def test_new_merge_finds_previous_merge_by_leaf_ids(self) -> None:
+        previous = {
+            "transaction_id": "bank_tx_shared",
+            "merged_transaction_ids": ["bank_tx_card_a", "bank_tx_card_b"],
+            "amount": "10.00",
+            "source_records": [
+                {"source_file": "card-a.pdf"},
+                {"source_file": "card-b.pdf"},
+            ],
+            "raw_record": {"line": "same transaction"},
+        }
+        apply_record_traceability([previous], [], "transaction_id")
+        current = {
+            "transaction_id": "bank_tx_with_email",
+            "merged_transaction_ids": [
+                "bank_tx_card_a",
+                "bank_tx_card_b",
+                "bank_tx_email",
+            ],
+            "amount": "10.00",
+            "summary": "邮件账单完整摘要",
+            "source_records": previous["source_records"] + [{"source_file": "statement.eml"}],
+            "raw_record": {"line": "same transaction"},
+        }
+
+        stats, history = apply_record_traceability([current], [previous], "transaction_id")
+
+        self.assertEqual(stats["records_revised"], 1)
+        self.assertEqual(current["record_version"], 2)
+        self.assertIn("bank_tx_shared", current["supersedes_record_ids"])
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["superseded_by_record_id"], "bank_tx_with_email")
 
     def test_bank_source_provenance_hashes_email_original_and_parsed_attachment(self) -> None:
         with TemporaryDirectory() as temporary:

@@ -248,10 +248,16 @@ def _match_rule(
     subject = metadata["subject"].lower()
     body = body_text.lower()
     for rule in rules:
-        sender_hits = _contains_any(sender, rule.get("sender_contains", []))
+        if _contains_any(sender, rule.get("sender_contains", [])):
+            return rule
+    for rule in rules:
+        bank_name = str(rule.get("bank_name", "")).strip().lower()
+        if bank_name and (bank_name in subject or bank_name in body):
+            return rule
+    for rule in rules:
         subject_hits = _contains_any(subject, rule.get("subject_contains", []))
         body_hits = _contains_any(body, rule.get("body_contains", []))
-        if sender_hits or (subject_hits and body_hits):
+        if subject_hits and body_hits:
             return rule
     if _contains_any(subject, subject_keywords):
         return {

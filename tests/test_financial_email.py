@@ -8,7 +8,8 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from flows.modules.financial_email_imap import FinancialEmailImapClient
-from flows.modules.financial_email_parser import FinancialEmailParser
+from flows.modules.financial_email_config import DEFAULT_BANK_RULES
+from flows.modules.financial_email_parser import FinancialEmailParser, _match_rule
 from flows.modules.financial_email_review_html import write_email_review_html
 
 
@@ -44,6 +45,22 @@ class FinancialEmailImapTests(unittest.TestCase):
 
 
 class FinancialEmailReviewTests(unittest.TestCase):
+    def test_specific_icbc_identity_wins_over_generic_credit_card_terms(self) -> None:
+        rule = _match_rule(
+            DEFAULT_BANK_RULES,
+            ["账单"],
+            {
+                "from": "statement@example.invalid",
+                "subject": "中国工商银行客户对账单(ICBC Peony Card Bank Statement)",
+            },
+            "信用卡对账单 卡号尾号5670",
+            [],
+        )
+
+        self.assertIsNotNone(rule)
+        assert rule is not None
+        self.assertEqual(rule["bank_key"], "icbc")
+
     def test_all_messages_are_reviewed_but_only_financial_mail_is_saved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_dir = Path(directory)

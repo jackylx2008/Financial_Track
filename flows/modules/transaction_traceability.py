@@ -79,8 +79,14 @@ def apply_record_traceability(
         str(item.get(id_field, "")): item for item in previous_records if item.get(id_field)
     }
     previous_by_lineage: dict[str, list[dict[str, Any]]] = {}
+    previous_by_merged_id: dict[str, list[dict[str, Any]]] = {}
     for item in previous_records:
         previous_by_lineage.setdefault(lineage_fingerprint(item, id_field), []).append(item)
+        merged_id_field = (
+            "merged_transaction_ids" if id_field == "transaction_id" else "merged_financial_transaction_ids"
+        )
+        for merged_id in item.get(merged_id_field, []):
+            previous_by_merged_id.setdefault(str(merged_id), []).append(item)
 
     superseded: list[dict[str, Any]] = []
     revised = 0
@@ -99,6 +105,9 @@ def apply_record_traceability(
             candidate = previous_by_id.get(str(merged_id))
             if candidate is not None and candidate not in previous_matches:
                 previous_matches.append(candidate)
+            merged_candidates = previous_by_merged_id.get(str(merged_id), [])
+            if len(merged_candidates) == 1 and merged_candidates[0] not in previous_matches:
+                previous_matches.append(merged_candidates[0])
         if not previous_matches:
             candidates = previous_by_lineage.get(lineage, [])
             if len(candidates) == 1:

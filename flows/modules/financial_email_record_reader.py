@@ -28,7 +28,7 @@ def read_email_candidate_transactions(
             continue
         record = json.loads(line)
         records_read += 1
-        bank_key = str(record.get("bank_key", ""))
+        bank_key, _bank_name = _effective_bank(record)
         parsed = _read_bank_email(record) if bank_key in SUPPORTED_BANKS else []
         if parsed:
             transactions.extend(parsed)
@@ -63,17 +63,25 @@ def _read_bank_email(record: dict[str, Any]) -> list[dict[str, Any]]:
     body_path = Path(str(record.get("body_text_file", "")))
     if not body_path.is_file():
         return []
-    bank_key = str(record.get("bank_key", ""))
-    candidates = parse_bank_email(bank_key, body_path.read_text(encoding="utf-8", errors="replace"), str(record.get("sent_at", "")))
-    return [_structured_candidate_to_transaction(record, candidate, index) for index, candidate in enumerate(candidates, start=1)]
+    body_text = body_path.read_text(encoding="utf-8", errors="replace")
+    bank_key, bank_name = _effective_bank(record, body_text)
+    candidates = parse_bank_email(bank_key, body_text, str(record.get("sent_at", "")))
+    return [
+        _structured_candidate_to_transaction(record, candidate, index, bank_key, bank_name)
+        for index, candidate in enumerate(candidates, start=1)
+    ]
 
 
 def _structured_candidate_to_transaction(
-    record: dict[str, Any], candidate: dict[str, Any], index: int
+    record: dict[str, Any],
+    candidate: dict[str, Any],
+    index: int,
+    bank_key: str,
+    bank_name: str,
 ) -> dict[str, Any]:
-    return make_transaction(
-        bank_key=str(record.get("bank_key", "")),
-        bank_name=str(record.get("bank_name", "")) or BANK_NAMES.get(str(record.get("bank_key", "")), ""),
+    transaction = make_transaction(
+        bank_key=bank_key,
+        bank_name=bank_name,
         account_full_name=str(candidate.get("account_full_name", "")),
         account_tail=str(candidate.get("account_tail", "")),
         transaction_time=str(candidate.get("transaction_time", "")),
@@ -84,11 +92,34 @@ def _structured_candidate_to_transaction(
         merchant=str(candidate.get("merchant", "")),
         counterparty=str(candidate.get("counterparty", "")),
         summary=str(candidate.get("summary", "")),
+        transaction_type=str(candidate.get("transaction_type", "")),
         transaction_reference=str(candidate.get("transaction_reference", "")),
         source_records=[_email_source_record(record, index)],
         confidence=float(candidate.get("confidence", 0.75)),
         raw_record=candidate,
     )
+    for field in ("card_type", "card_role", "transaction_card_tail"):
+        if candidate.get(field):
+            transaction[field] = candidate[field]
+    return transaction
+
+
+def _effective_bank(record: dict[str, Any], body_text: str = "") -> tuple[str, str]:
+    if not body_text:
+        body_path = Path(str(record.get("body_text_file", "")))
+        if body_path.is_file():
+            body_text = body_path.read_text(encoding="utf-8", errors="replace")
+    identity = f"{record.get('subject', '')}\n{body_text[:2000]}".lower()
+    signatures = (
+        ("icbc", "工商银行", ("工商银行", "icbc", "工银")),
+        ("cmb", "招商银行", ("招商银行", "cmbchina")),
+        ("ccb", "建设银行", ("建设银行", "建行")),
+    )
+    for bank_key, bank_name, aliases in signatures:
+        if any(alias.lower() in identity for alias in aliases):
+            return bank_key, bank_name
+    bank_key = str(record.get("bank_key", ""))
+    return bank_key, str(record.get("bank_name", "")) or BANK_NAMES.get(bank_key, "")
 
 
 def _read_email_with_ai(
@@ -97,10 +128,12 @@ def _read_email_with_ai(
     body_path = Path(str(record.get("body_text_file", "")))
     if not body_path.is_file():
         return []
+    body_text = body_path.read_text(encoding="utf-8", errors="replace")
+    bank_key, bank_name = _effective_bank(record, body_text)
     return ai_fallback.parse(
-        text=body_path.read_text(encoding="utf-8", errors="replace"),
-        bank_key=str(record.get("bank_key", "unknown")),
-        bank_name=str(record.get("bank_name", "")),
+        text=body_text,
+        bank_key=bank_key or "unknown",
+        bank_name=bank_name,
         source_record=_email_source_record(record, 0),
         source_label="email_body",
     )

@@ -71,6 +71,8 @@ def read_attachment_transactions(
         except Exception as exc:
             failures.append(f"{path}: AI fallback: {type(exc).__name__}: {exc}")
             unresolved_files.append(_unresolved_file(path, item, f"AI/OCR 处理失败：{type(exc).__name__}"))
+    for transaction in transactions:
+        _apply_known_card_metadata(transaction)
     stats = {
         "manifest_exists": True,
         "files_seen": files_seen,
@@ -332,7 +334,7 @@ def _parse_icbc_credit_card_line(
     direction = "outflow" if tokens[2] == "借" else "inflow"
     summary = tokens[8] if len(tokens) > 8 else ""
     counterparty = " ".join(tokens[9:])
-    return make_transaction(
+    transaction = make_transaction(
         bank_key=str(manifest_item.get("bank_key", "icbc") or "icbc"),
         bank_name="工商银行",
         account_full_name=account_full_name,
@@ -359,6 +361,22 @@ def _parse_icbc_credit_card_line(
         confidence=0.9,
         raw_record={"line": detail_line},
     )
+    transaction["card_type"] = "信用卡"
+    transaction["transaction_card_tail"] = re.sub(r"\D", "", tokens[1])[-4:]
+    return transaction
+
+
+def _apply_known_card_metadata(transaction: dict[str, Any]) -> None:
+    bank_key = str(transaction.get("bank_key", ""))
+    if bank_key in {"bocom", "ccb"}:
+        transaction["card_type"] = "借记卡"
+    elif bank_key == "cmb":
+        transaction["card_type"] = "信用卡"
+    elif bank_key == "icbc" and not transaction.get("card_type"):
+        raw_record = transaction.get("raw_record")
+        raw_line = str(raw_record.get("line", "")) if isinstance(raw_record, dict) else ""
+        tokens = raw_line.split()
+        transaction["card_type"] = "信用卡" if len(tokens) >= 3 and tokens[2] in {"借", "贷"} else "借记卡"
 
 
 def _read_xls_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
