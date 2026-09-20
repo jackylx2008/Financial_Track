@@ -465,6 +465,8 @@ processed_data/normalized/email_normalization_unresolved.json
 邮件中的完整信息，打印流水的精确时间、账户尾号和来源定位继续保留。招商银行电子月账单按交易块解析消费和还款。
 当前个人数据中的交通银行 PDF 和建设银行活期明细均明确保存为借记卡，不再根据账号长度或摘要中的“信用卡还款”
 文字误判卡片类型。
+放在 `raw_data/` 根目录的 `中国光大银行账户明细查询清单.xls` 会在银行归一化时自动读取为光大银行借记卡流水；
+支出金额和存入金额分别映射为支出和收入，对方账号（包括星号）、对方户名、摘要、余额、工作表及行号均予以保留。
 首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
 未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由

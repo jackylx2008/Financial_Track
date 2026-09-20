@@ -13,6 +13,7 @@
   --output-dir           normalized 输出目录。
   --email-records        邮件记录 JSONL。
   --attachment-manifest  附件提取清单。
+  --standalone-bank-root 人工放入银行流水文件的目录。
   --order-json-root      各平台订单 JSON 根目录。
   --order-platform       可重复指定订单平台。
   --no-document-ai      禁用银行文档的本地 AI/OCR 回退。
@@ -78,6 +79,11 @@ def parse_args() -> argparse.Namespace:
         help="Order platform to normalize. Can be repeated. Defaults to pdd and meituan.",
     )
     parser.add_argument(
+        "--standalone-bank-root",
+        default="raw_data",
+        help="Directory containing known standalone bank statement files.",
+    )
+    parser.add_argument(
         "--no-document-ai",
         action="store_true",
         help="Disable on-demand local AI/OCR fallback for unrecognized bank documents.",
@@ -100,6 +106,7 @@ def main() -> int:
         output_dir=args.output_dir,
         email_records_path=args.email_records,
         attachment_manifest_path=args.attachment_manifest,
+        standalone_bank_root=args.standalone_bank_root,
         order_json_root=args.order_json_root,
         order_platforms=args.order_platform or ["pdd", "meituan"],
     )

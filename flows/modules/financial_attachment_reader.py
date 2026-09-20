@@ -16,6 +16,44 @@ TIME_RE = re.compile(r"^\d{2}:\d{2}:\d{2}$")
 ACCOUNT_RE = re.compile(r"(?:卡号|账号|卡号/账号)[:： ]*([0-9*]{4,})")
 CARD_TAIL_RE = re.compile(r"\(([0-9*]{4,})\)")
 SIGNED_AMOUNT_RE = re.compile(r"^[+-]\d{1,3}(?:,\d{3})*(?:\.\d{2})$|^[+-]\d+(?:\.\d{2})$")
+STANDALONE_BANK_FILES = {
+    "中国光大银行账户明细查询清单.xls": {
+        "bank_key": "ceb",
+        "bank_name": "光大银行",
+    },
+}
+
+
+def read_standalone_bank_transactions(
+    root: Path,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """读取 raw_data 根目录中人工放入的已知银行流水文件。"""
+    transactions: list[dict[str, Any]] = []
+    failures: list[str] = []
+    unresolved_files: list[dict[str, str]] = []
+    files_seen = 0
+    for filename, metadata in STANDALONE_BANK_FILES.items():
+        path = root / filename
+        if not path.is_file():
+            continue
+        files_seen += 1
+        item = {**metadata, "status": "success", "output_files": [str(path)]}
+        try:
+            parsed = _read_xls_transactions(path, item, "standalone_bank_xls")
+            transactions.extend(parsed)
+            if not parsed:
+                unresolved_files.append(_unresolved_file(path, item))
+        except Exception as exc:
+            failures.append(f"{path}: {type(exc).__name__}: {exc}")
+            unresolved_files.append(_unresolved_file(path, item, f"自动解析失败：{type(exc).__name__}"))
+    for transaction in transactions:
+        _apply_known_card_metadata(transaction)
+    return transactions, {
+        "files_seen": files_seen,
+        "transactions": len(transactions),
+        "parse_failures": failures,
+        "unresolved_files": unresolved_files,
+    }
 
 
 def read_attachment_transactions(
@@ -368,7 +406,7 @@ def _parse_icbc_credit_card_line(
 
 def _apply_known_card_metadata(transaction: dict[str, Any]) -> None:
     bank_key = str(transaction.get("bank_key", ""))
-    if bank_key in {"bocom", "ccb"}:
+    if bank_key in {"bocom", "ccb", "ceb"}:
         transaction["card_type"] = "借记卡"
     elif bank_key == "cmb":
         transaction["card_type"] = "信用卡"
@@ -379,7 +417,11 @@ def _apply_known_card_metadata(transaction: dict[str, Any]) -> None:
         transaction["card_type"] = "信用卡" if len(tokens) >= 3 and tokens[2] in {"借", "贷"} else "借记卡"
 
 
-def _read_xls_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
+def _read_xls_transactions(
+    path: Path,
+    manifest_item: dict[str, Any],
+    source_type: str = "email_attachment_xls",
+) -> list[dict[str, Any]]:
     import xlrd
 
     book = xlrd.open_workbook(str(path))
@@ -390,41 +432,24 @@ def _read_xls_transactions(path: Path, manifest_item: dict[str, Any]) -> list[di
             continue
         headers = [str(sheet.cell_value(header_row, col)).strip() for col in range(sheet.ncols)]
         account_full_name = _account_full_from_xls(sheet)
-        account_tail = _account_tail_from_text(account_full_name)
-        for row_index in range(header_row + 1, sheet.nrows):
-            row = {headers[col]: sheet.cell_value(row_index, col) for col in range(min(sheet.ncols, len(headers)))}
-            if not str(row.get("交易日期", "")).strip():
-                continue
-            amount = str(row.get("交易金额", "")).strip()
-            if not parse_money_token(amount):
-                continue
-            transactions.append(
-                make_transaction(
-                    bank_key=str(manifest_item.get("bank_key", "ccb") or "ccb"),
-                    bank_name="建设银行",
-                    account_full_name=account_full_name,
-                    account_tail=account_tail,
-                    transaction_time=_format_yyyymmdd(str(row.get("交易日期", "")).strip()),
-                    direction="inflow" if not amount.startswith("-") else "outflow",
-                    amount=amount,
-                    summary=str(row.get("摘要", "")).strip(),
-                    balance=str(row.get("账户余额", "")).strip(),
-                    counterparty=str(row.get("对方账号与户名", "")).strip(),
-                    channel=str(row.get("交易地点/附言", "")).strip(),
-                    source_records=[
-                        {
-                            "source_type": "email_attachment_xls",
-                            "source_file": str(path),
-                            "message_uid": manifest_item.get("message_uid", ""),
-                            "message_id": manifest_item.get("message_id", ""),
-                            "sheet": sheet.name,
-                            "row": row_index + 1,
-                        }
-                    ],
-                    confidence=0.92,
-                    raw_record=row,
-                )
+        rows = [
+            {
+                headers[col]: str(sheet.cell_value(row_index, col)).strip()
+                for col in range(min(sheet.ncols, len(headers)))
+            }
+            for row_index in range(header_row + 1, sheet.nrows)
+        ]
+        transactions.extend(
+            _read_generic_bank_rows(
+                path,
+                manifest_item,
+                rows,
+                source_type,
+                sheet_name=sheet.name,
+                first_data_row=header_row + 2,
+                default_account_full_name=account_full_name,
             )
+        )
     return transactions
 
 
@@ -466,13 +491,17 @@ def _read_generic_bank_rows(
     source_type: str,
     sheet_name: str = "",
     first_data_row: int = 2,
+    default_account_full_name: str = "",
 ) -> list[dict[str, Any]]:
     transactions: list[dict[str, Any]] = []
     for offset, row in enumerate(rows):
         transaction_time = _first_value(row, "交易时间", "交易日期", "交易日", "发生时间", "记账时间")
+        separate_date = _first_value(row, "交易日期", "交易日")
+        if separate_date and re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", transaction_time):
+            transaction_time = f"{separate_date} {transaction_time}"
         posting_date = _first_value(row, "入账日期", "记账日期", "入账日")
         debit = _clean_money(_first_value(row, "支出金额", "借方发生额", "借方金额"))
-        credit = _clean_money(_first_value(row, "收入金额", "贷方发生额", "贷方金额"))
+        credit = _clean_money(_first_value(row, "收入金额", "存入金额", "贷方发生额", "贷方金额"))
         amount = _clean_money(_first_value(row, "交易金额", "金额", "发生额"))
         direction = _direction_from_cn(_first_value(row, "收/支", "收支", "交易方向", "借贷标志"))
         if parse_money_token(debit) and debit not in {"0", "0.0", "0.00"}:
@@ -512,8 +541,8 @@ def _read_generic_bank_rows(
         merchant = _first_value(row, "商户名称", "商户", "交易商户") or counterparty
         account_full_name = _first_value(row, "账户名称", "户名", "本方户名")
         account_number = _first_value(row, "卡号", "账号", "卡号/账号", "本方账号")
-        account_display = account_full_name or _full_account_value(account_number)
-        account_tail = _account_tail_from_text(account_number)
+        account_display = account_full_name or _full_account_value(account_number) or default_account_full_name
+        account_tail = _account_tail_from_text(account_number or default_account_full_name)
         source = {
             "source_type": source_type,
             "source_file": str(path),
@@ -632,7 +661,7 @@ def _attachment_text(path: Path) -> str:
 def _find_header_row(sheet: Any) -> int | None:
     for row_index in range(sheet.nrows):
         values = [str(sheet.cell_value(row_index, col)).strip() for col in range(sheet.ncols)]
-        if "交易日期" in values and "交易金额" in values:
+        if "交易日期" in values and ({"交易金额", "支出金额", "存入金额"} & set(values)):
             return row_index
     return None
 
@@ -699,6 +728,7 @@ def _bank_name(bank_key: str) -> str:
         "cmb": "招商银行",
         "ccb": "建设银行",
         "bocom": "交通银行",
+        "ceb": "光大银行",
     }.get(bank_key, "")
 
 

@@ -299,6 +299,7 @@ def run_normalize_stage(ctx: Any, args: argparse.Namespace) -> dict[str, Any]:
         output_dir=args.normalized_output_dir,
         email_records_path=args.records,
         attachment_manifest_path=args.attachment_manifest,
+        standalone_bank_root="raw_data",
         order_json_root="raw_data/order_json",
         order_platforms=[],
     )

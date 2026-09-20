@@ -12,6 +12,7 @@
   --config               配置文件路径，默认 `config.yaml`。
   --email-records        流水邮件记录 JSONL 路径，默认 `raw_data/financial_email/financial_email_records.jsonl`。
   --attachment-manifest  附件提取清单路径，默认 `raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json`。
+  --standalone-bank-root 人工放入银行流水文件的目录，默认 `raw_data`。
   --output-dir           归一化流水输出目录，默认 `processed_data/normalized`。
 
 示例：
@@ -55,6 +56,7 @@ def parse_args() -> argparse.Namespace:
         help="Path to attachment_extract_manifest.json.",
     )
     parser.add_argument("--output-dir", default="processed_data/normalized", help="Output directory.")
+    parser.add_argument("--standalone-bank-root", default="raw_data", help="Standalone bank statement directory.")
     return parser.parse_args()
 
 
@@ -72,6 +74,7 @@ def main() -> int:
         email_records_path=args.email_records,
         attachment_manifest_path=args.attachment_manifest,
         output_dir=args.output_dir,
+        standalone_bank_root=args.standalone_bank_root,
     )
     print_json(summary)
     return 0

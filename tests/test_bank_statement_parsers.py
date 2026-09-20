@@ -14,6 +14,7 @@ from flows.modules.bank_transaction_filter import filter_transactions
 from flows.modules.bank_transaction_full_review_html import write_full_review_html
 from flows.modules.financial_attachment_reader import (
     _parse_icbc_pdf_line,
+    _read_generic_bank_rows,
     read_attachment_transactions,
 )
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
@@ -133,6 +134,50 @@ CN
 
 
 class AttachmentParserTests(unittest.TestCase):
+    def test_parses_ceb_debit_and_credit_columns_with_masked_counterparty_account(self) -> None:
+        rows = _read_generic_bank_rows(
+            Path("中国光大银行账户明细查询清单.xls"),
+            {"bank_key": "ceb", "bank_name": "光大银行"},
+            [
+                {
+                    "交易日期": "2015-01-07",
+                    "交易时间": "10:54:49",
+                    "支出金额": "4500.0",
+                    "存入金额": "",
+                    "账户余额": "1239.98",
+                    "对方账号": "767501*******0001",
+                    "对方户名": "示例支付机构",
+                    "摘要": "网上支付 示例平台",
+                },
+                {
+                    "交易日期": "2015-01-08",
+                    "交易时间": "09:01:02",
+                    "支出金额": "",
+                    "存入金额": "522.0",
+                    "账户余额": "1761.98",
+                    "对方账号": "621030******1581",
+                    "对方户名": "示例对方",
+                    "摘要": "网银跨行汇款",
+                },
+            ],
+            "standalone_bank_xls",
+            sheet_name="Sheet1",
+            first_data_row=2,
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["bank_key"], "ceb")
+        self.assertEqual(rows[0]["bank_name"], "光大银行")
+        self.assertEqual(rows[0]["transaction_time"], "2015-01-07 10:54:49")
+        self.assertEqual(rows[0]["direction"], "outflow")
+        self.assertEqual(rows[0]["amount"], "4500.00")
+        self.assertEqual(rows[0]["counterparty_account"], "767501*******0001")
+        self.assertEqual(rows[0]["counterparty"], "示例支付机构")
+        self.assertEqual(rows[0]["source_records"][0]["sheet"], "Sheet1")
+        self.assertEqual(rows[0]["source_records"][0]["row"], 2)
+        self.assertEqual(rows[1]["direction"], "inflow")
+        self.assertEqual(rows[1]["amount"], "522.00")
+
     def test_icbc_debit_account_pdf_uses_signed_transaction_amount(self) -> None:
         row = _parse_icbc_pdf_line(
             date="2018-03-30",

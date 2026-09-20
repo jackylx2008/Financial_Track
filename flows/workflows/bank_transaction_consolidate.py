@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from flows.context import AppContext
-from flows.modules.financial_attachment_reader import read_attachment_transactions
+from flows.modules.financial_attachment_reader import (
+    read_attachment_transactions,
+    read_standalone_bank_transactions,
+)
 from flows.modules.financial_email_record_reader import read_email_candidate_transactions
 from flows.modules.bank_transaction_deduper import dedupe_transactions
 from flows.modules.bank_transaction_filter import filter_transactions
@@ -28,16 +31,23 @@ def run(
     email_records_path: str | Path,
     attachment_manifest_path: str | Path,
     output_dir: str | Path,
+    standalone_bank_root: str | Path = "raw_data",
 ) -> dict[str, Any]:
     email_records_file = ctx.resolve_path(email_records_path)
     attachment_manifest_file = ctx.resolve_path(attachment_manifest_path)
     output_path = ctx.resolve_path(output_dir)
+    standalone_root = ctx.resolve_path(standalone_bank_root)
     output_path.mkdir(parents=True, exist_ok=True)
 
     ai_fallback = FinancialDocumentAiFallback(ctx.config, ctx.project_root)
     attachment_transactions, attachment_stats = read_attachment_transactions(attachment_manifest_file, ai_fallback)
+    standalone_transactions, standalone_stats = read_standalone_bank_transactions(standalone_root)
     email_transactions, email_stats = read_email_candidate_transactions(email_records_file)
-    raw_transactions = email_transactions + attachment_transactions
+    raw_transactions = email_transactions + attachment_transactions + standalone_transactions
+    attachment_stats["files_seen"] += standalone_stats["files_seen"]
+    attachment_stats["transactions"] += standalone_stats["transactions"]
+    attachment_stats["parse_failures"] += standalone_stats["parse_failures"]
+    attachment_stats["unresolved_files"] += standalone_stats["unresolved_files"]
     filtered_transactions, filter_stats = filter_transactions(raw_transactions)
     deduped_transactions, dedupe_stats = dedupe_transactions(filtered_transactions)
 
@@ -98,6 +108,8 @@ def run(
         "deduped_transactions": len(deduped_transactions),
         "email_transactions": len(email_transactions),
         "attachment_transactions": len(attachment_transactions),
+        "standalone_bank_transactions": len(standalone_transactions),
+        "standalone_bank_files": standalone_stats["files_seen"],
         "filtered_transactions": len(filtered_transactions),
         "rejected_non_transactions": filter_stats["rejected"],
         "jsonl": str(jsonl_path),

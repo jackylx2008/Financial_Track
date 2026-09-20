@@ -20,6 +20,7 @@ def run(
     output_dir: str | Path,
     email_records_path: str | Path,
     attachment_manifest_path: str | Path,
+    standalone_bank_root: str | Path,
     order_json_root: str | Path,
     order_platforms: list[str],
 ) -> dict[str, Any]:
@@ -37,6 +38,7 @@ def run(
             email_records_path=email_records_path,
             attachment_manifest_path=attachment_manifest_path,
             output_dir=output_path,
+            standalone_bank_root=standalone_bank_root,
         )
     if "orders" in sources:
         summary["results"]["orders"] = run_order_normalize(
