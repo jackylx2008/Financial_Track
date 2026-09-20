@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from flows.modules.pdf_hash_registry import sync_pdf_hash_registry
+
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +31,7 @@ def export_pdf_tables(
     pdf_paths = sorted(path for path in input_root.rglob("*.pdf") if path.is_file())
 
     documents: list[dict[str, Any]] = []
-    converted = reused = failed = 0
+    converted = reused = upgraded = failed = 0
     for index, path in enumerate(pdf_paths, start=1):
         digest = sha256_file(path)
         cache_path = cache_dir / f"{digest}.json"
@@ -44,6 +46,10 @@ def export_pdf_tables(
             else:
                 reused += 1
                 status = "cached"
+                if not isinstance(cached.get("parser_text"), str):
+                    _add_parser_text(cached, path)
+                    _write_json(cache_path, cached)
+                    upgraded += 1
             documents.append(_document_payload(path, relative, cached, status, cache_path))
             logger.info(
                 "PDF table HTML %s/%s: status=%s pages=%s tables=%s rows=%s file=%s",
@@ -83,17 +89,31 @@ def export_pdf_tables(
         "pdf_files": len(pdf_paths),
         "converted": converted,
         "reused": reused,
+        "upgraded": upgraded,
         "failed": failed,
         "pages": sum(item["page_count"] for item in documents),
         "tables": sum(item["table_count"] for item in documents),
         "rows": sum(item["row_count"] for item in documents),
     }
-    manifest = {**summary, "documents": [{key: value for key, value in item.items() if key != "pages"} for item in documents]}
     manifest_path = output_dir / "pdf_html_manifest.json"
     review_path = output_dir / "bank_pdf_tables_review.html"
+    registry = sync_pdf_hash_registry(output_dir, documents, invalidate_ocr=force)
+    for document in documents:
+        entry = registry["documents"].get(document.get("sha256", ""), {})
+        document["ocr_status"] = entry.get("ocr_status", "pending")
+    manifest = {
+        **summary,
+        "documents": [{key: value for key, value in item.items() if key != "pages"} for item in documents],
+    }
     _write_json(manifest_path, manifest)
     review_path.write_text(build_review_html(summary, documents), encoding="utf-8")
-    return {**summary, "manifest": str(manifest_path), "review_html": str(review_path)}
+    return {
+        **summary,
+        "hash_index": str(output_dir / "pdf_hash_index.json"),
+        "hash_entries": len(registry["documents"]),
+        "manifest": str(manifest_path),
+        "review_html": str(review_path),
+    }
 
 
 def extract_pdf_tables(path: Path, digest: str | None = None) -> dict[str, Any]:
@@ -126,7 +146,7 @@ def extract_pdf_tables(path: Path, digest: str | None = None) -> dict[str, Any]:
                     "tables": tables,
                 }
             )
-    return {
+    payload = {
         "schema_version": CACHE_SCHEMA_VERSION,
         "source_sha256": digest or sha256_file(path),
         "page_count": len(pages),
@@ -134,6 +154,8 @@ def extract_pdf_tables(path: Path, digest: str | None = None) -> dict[str, Any]:
         "row_count": row_count,
         "pages": pages,
     }
+    _add_parser_text(payload, path)
+    return payload
 
 
 def read_cached_pdf_text(path: Path, project_root: Path | None = None) -> str | None:
@@ -143,7 +165,15 @@ def read_cached_pdf_text(path: Path, project_root: Path | None = None) -> str | 
     cached = _read_valid_cache(cache_path, digest)
     if cached is None:
         return None
-    return "\n".join(str(page.get("text", "")) for page in cached.get("pages", []))
+    parser_text = cached.get("parser_text")
+    if not isinstance(parser_text, str):
+        return None
+    expected = cached.get("parser_text_sha256")
+    actual = hashlib.sha256(parser_text.encode("utf-8")).hexdigest()
+    if expected != actual:
+        logger.warning("Cached PDF parser text hash mismatch: %s", cache_path)
+        return None
+    return parser_text
 
 
 def sha256_file(path: Path) -> str:
@@ -184,7 +214,16 @@ def _document_payload(
         "row_count": cached["row_count"],
         "pages": [{key: value for key, value in page.items() if key != "text"} for page in cached["pages"]],
         "cache_file": str(cache_path),
+        "parser_text_cached": isinstance(cached.get("parser_text"), str),
     }
+
+
+def _add_parser_text(payload: dict[str, Any], path: Path) -> None:
+    from pypdf import PdfReader
+
+    text = "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+    payload["parser_text"] = text
+    payload["parser_text_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def _normalize_rows(rows: list[list[Any]]) -> list[list[str]]:
@@ -259,6 +298,6 @@ function currentDocument(){return data.documents[Number($('document').value)]}
 function refreshPages(){const d=currentDocument(),current=$('page').value;options($('page'),d?d.pages.map(p=>({value:String(p.page_number),label:`第 ${p.page_number} 页`})):[],'没有页面');if([...$('page').options].some(o=>o.value===current))$('page').value=current;render()}
 function node(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e}
 async function openSource(event){const d=currentDocument();if(!d)return;if(!/^https?:$/.test(location.protocol))return;event.preventDefault();const u=new URL('/open-source',location.origin);u.searchParams.set('path',d.source_file);u.searchParams.set('token',new URLSearchParams(location.search).get('token')||'');const response=await fetch(u);if(!response.ok)alert('打开原 PDF 失败')}
-function render(){const d=currentDocument(),viewer=$('viewer');viewer.replaceChildren();if(!d){viewer.append(node('div','没有可显示的 PDF','empty'));return}const source=$('source');source.href=d.source_uri||'#';source.dataset.path=d.source_file;const h=node('h2',d.relative_file);viewer.append(h);viewer.append(node('div',`SHA-256：${d.sha256} · ${d.status==='cached'?'复用缓存':'本次转换'} · ${d.page_count} 页 / ${d.table_count} 个表格 / ${d.row_count} 行`,'meta '+(d.status==='cached'?'cached':'')));if(d.error){viewer.append(node('p',d.error,'error'));return}const p=d.pages.find(x=>String(x.page_number)===$('page').value)||d.pages[0];if(!p){viewer.append(node('div','该 PDF 没有页面','empty'));return}const page=node('div',undefined,'page'),canvas=node('div',undefined,'page-canvas');canvas.style.width=`min(100%,${Math.max(720,p.width*1.333)}px)`;canvas.append(node('div',`原 PDF 第 ${p.page_number} 页：共 ${p.tables.length} 个表格`,'page-title'));for(const t of p.tables){const table=node('table',undefined,'pdf-table'),total=t.column_widths.reduce((a,b)=>a+b,0),cg=node('colgroup');for(const width of t.column_widths){const col=node('col');col.style.width=`${width/total*100}%`;cg.append(col)}table.append(cg);const body=node('tbody');for(const row of t.rows){const tr=node('tr');for(const cell of row)tr.append(node('td',cell||''));body.append(tr)}table.append(body);table.style.width=`${(t.bbox[2]-t.bbox[0])/p.width*100}%`;table.style.marginLeft=`${t.bbox[0]/p.width*100}%`;table.style.marginTop='8px';canvas.append(table)}if(!p.tables.length)canvas.append(node('div','本页未检测到可稳定提取的表格，请打开原 PDF 核对。','empty'));page.append(canvas);viewer.append(page)}
+function render(){const d=currentDocument(),viewer=$('viewer');viewer.replaceChildren();if(!d){viewer.append(node('div','没有可显示的 PDF','empty'));return}const source=$('source');source.href=d.source_uri||'#';source.dataset.path=d.source_file;const h=node('h2',d.relative_file);viewer.append(h);const ocr=d.ocr_status==='passed'?'OCR 已核验':'OCR 待核验';viewer.append(node('div',`SHA-256：${d.sha256} · ${d.status==='cached'?'复用缓存':'本次转换'} · ${ocr} · ${d.page_count} 页 / ${d.table_count} 个表格 / ${d.row_count} 行`,'meta '+(d.status==='cached'?'cached':'')));if(d.error){viewer.append(node('p',d.error,'error'));return}const p=d.pages.find(x=>String(x.page_number)===$('page').value)||d.pages[0];if(!p){viewer.append(node('div','该 PDF 没有页面','empty'));return}const page=node('div',undefined,'page'),canvas=node('div',undefined,'page-canvas');canvas.style.width=`min(100%,${Math.max(720,p.width*1.333)}px)`;canvas.append(node('div',`原 PDF 第 ${p.page_number} 页：共 ${p.tables.length} 个表格`,'page-title'));for(const t of p.tables){const table=node('table',undefined,'pdf-table'),total=t.column_widths.reduce((a,b)=>a+b,0),cg=node('colgroup');for(const width of t.column_widths){const col=node('col');col.style.width=`${width/total*100}%`;cg.append(col)}table.append(cg);const body=node('tbody');for(const row of t.rows){const tr=node('tr');for(const cell of row)tr.append(node('td',cell||''));body.append(tr)}table.append(body);table.style.width=`${(t.bbox[2]-t.bbox[0])/p.width*100}%`;table.style.marginLeft=`${t.bbox[0]/p.width*100}%`;table.style.marginTop='8px';canvas.append(table)}if(!p.tables.length)canvas.append(node('div','本页未检测到可稳定提取的表格，请打开原 PDF 核对。','empty'));page.append(canvas);viewer.append(page)}
 $('institution').addEventListener('change',refreshDocuments);$('document').addEventListener('change',refreshPages);$('page').addEventListener('change',render);$('source').addEventListener('click',openSource);refreshDocuments();
 </script></body></html>'''

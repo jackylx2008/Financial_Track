@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+from flows.modules.pdf_hash_registry import load_pdf_hash_registry, update_ocr_status
+
 
 logger = logging.getLogger(__name__)
 BEIJING_TIMEZONE = timezone(timedelta(hours=8), name="北京时间")
@@ -57,6 +59,7 @@ def verify_pdf_html_ocr(
     min_number_similarity: float = 0.95,
     dpi: int = 200,
     ocr: Callable[[Path], str] | None = None,
+    force: bool = False,
 ) -> dict[str, Any]:
     review_dir = review_dir.resolve()
     manifest_path = review_dir / "pdf_html_manifest.json"
@@ -65,6 +68,17 @@ def verify_pdf_html_ocr(
     documents = manifest.get("documents", [])
     html_payload = _read_html_payload(html_path)
     structural = _verify_structure(documents, html_payload.get("documents", []))
+    registry = load_pdf_hash_registry(review_dir)
+    pending: list[tuple[int, dict[str, Any]]] = []
+    seen_hashes: set[str] = set()
+    for index, document in enumerate(documents):
+        digest = str(document.get("sha256", ""))
+        if not digest or digest in seen_hashes:
+            continue
+        seen_hashes.add(digest)
+        status = registry.get("documents", {}).get(digest, {}).get("ocr_status")
+        if force or status != "passed":
+            pending.append((index, document))
     ocr_engine = ocr or _rapid_ocr
     temp_parent = review_dir.parent.parent / "tmp" / "pdfs"
     temp_parent.mkdir(parents=True, exist_ok=True)
@@ -72,74 +86,103 @@ def verify_pdf_html_ocr(
     comparisons: list[dict[str, Any]] = []
     with tempfile.TemporaryDirectory(prefix="pdf_html_ocr_verify_", dir=temp_parent) as directory:
         temp_root = Path(directory)
-        from playwright.sync_api import sync_playwright
+        if pending:
+            from playwright.sync_api import sync_playwright
 
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
-            context = browser.new_context(
-                viewport={"width": 1800, "height": 1400},
-                device_scale_factor=2,
-            )
-            page = context.new_page()
-            page.goto(html_path.as_uri(), wait_until="load")
-            for document_index, document in enumerate(documents):
-                source = Path(document["source_file"])
-                cached = json.loads(Path(document["cache_file"]).read_text(encoding="utf-8"))
-                selected = representative_pages(int(document["page_count"]), pages_per_pdf)
-                page.select_option("#document", str(document_index))
-                for page_number in selected:
-                    cached_page = cached["pages"][page_number - 1]
-                    page.select_option("#page", str(page_number))
-                    tables = cached_page.get("tables", [])
-                    for table_position, table in enumerate(tables):
-                        pdf_image = temp_root / f"d{document_index:03d}_p{page_number:04d}_t{table_position + 1:02d}_pdf.png"
-                        html_image = temp_root / f"d{document_index:03d}_p{page_number:04d}_t{table_position + 1:02d}_html.png"
-                        _render_pdf_table(source, page_number, table["bbox"], pdf_image, dpi)
-                        page.locator(".pdf-table").nth(table_position).screenshot(path=str(html_image))
-                        pdf_ocr_text = ocr_engine(pdf_image)
-                        html_ocr_text = ocr_engine(html_image)
-                        metrics = comparison_metrics(pdf_ocr_text, html_ocr_text)
-                        passed = (
-                            metrics["character_similarity"] >= min_character_similarity
-                            and metrics["number_similarity"] >= min_number_similarity
-                        )
-                        retry_dpi = 0
-                        if not passed and dpi < 300:
-                            retry_dpi = 300
-                            _render_pdf_table(source, page_number, table["bbox"], pdf_image, retry_dpi)
-                            metrics = comparison_metrics(ocr_engine(pdf_image), html_ocr_text)
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch(headless=True)
+                context = browser.new_context(
+                    viewport={"width": 1800, "height": 1400},
+                    device_scale_factor=2,
+                )
+                page = context.new_page()
+                page.goto(html_path.as_uri(), wait_until="load")
+                for document_index, document in pending:
+                    source = Path(document["source_file"])
+                    cached = json.loads(Path(document["cache_file"]).read_text(encoding="utf-8"))
+                    selected = representative_pages(int(document["page_count"]), pages_per_pdf)
+                    page.select_option("#document", str(document_index))
+                    for page_number in selected:
+                        cached_page = cached["pages"][page_number - 1]
+                        page.select_option("#page", str(page_number))
+                        tables = cached_page.get("tables", [])
+                        for table_position, table in enumerate(tables):
+                            pdf_image = temp_root / (
+                                f"d{document_index:03d}_p{page_number:04d}_t{table_position + 1:02d}_pdf.png"
+                            )
+                            html_image = temp_root / (
+                                f"d{document_index:03d}_p{page_number:04d}_t{table_position + 1:02d}_html.png"
+                            )
+                            _render_pdf_table(source, page_number, table["bbox"], pdf_image, dpi)
+                            page.locator(".pdf-table").nth(table_position).screenshot(path=str(html_image))
+                            pdf_ocr_text = ocr_engine(pdf_image)
+                            html_ocr_text = ocr_engine(html_image)
+                            metrics = comparison_metrics(pdf_ocr_text, html_ocr_text)
                             passed = (
                                 metrics["character_similarity"] >= min_character_similarity
                                 and metrics["number_similarity"] >= min_number_similarity
                             )
-                        comparisons.append(
-                            {
-                                "relative_file": document["relative_file"],
-                                "sha256": document["sha256"],
-                                "page": page_number,
-                                "table": table_position + 1,
-                                **metrics,
-                                "retry_dpi": retry_dpi,
-                                "passed": passed,
-                            }
-                        )
-                        logger.info(
-                            "OCR compare: document=%s page=%s table=%s chars=%.3f numbers=%.3f passed=%s",
-                            document_index + 1,
-                            page_number,
-                            table_position + 1,
-                            metrics["character_similarity"],
-                            metrics["number_similarity"],
-                            passed,
-                        )
-            context.close()
-            browser.close()
+                            retry_dpi = 0
+                            if not passed and dpi < 300:
+                                retry_dpi = 300
+                                _render_pdf_table(source, page_number, table["bbox"], pdf_image, retry_dpi)
+                                metrics = comparison_metrics(ocr_engine(pdf_image), html_ocr_text)
+                                passed = (
+                                    metrics["character_similarity"] >= min_character_similarity
+                                    and metrics["number_similarity"] >= min_number_similarity
+                                )
+                            comparisons.append(
+                                {
+                                    "relative_file": document["relative_file"],
+                                    "sha256": document["sha256"],
+                                    "page": page_number,
+                                    "table": table_position + 1,
+                                    **metrics,
+                                    "retry_dpi": retry_dpi,
+                                    "passed": passed,
+                                }
+                            )
+                            logger.info(
+                                "OCR compare: document=%s page=%s table=%s chars=%.3f numbers=%.3f passed=%s",
+                                document_index + 1,
+                                page_number,
+                                table_position + 1,
+                                metrics["character_similarity"],
+                                metrics["number_similarity"],
+                                passed,
+                            )
+                context.close()
+                browser.close()
 
     failures = [item for item in comparisons if not item["passed"]]
+    document_statuses: dict[str, str] = {}
+    for _, document in pending:
+        digest = str(document.get("sha256", ""))
+        document_rows = [item for item in comparisons if item["sha256"] == digest]
+        document_statuses[digest] = (
+            "passed"
+            if structural["match"] and document_rows and all(item["passed"] for item in document_rows)
+            else "failed"
+        )
+    updated_registry = update_ocr_status(review_dir, document_statuses)
+    current_hashes = list(
+        dict.fromkeys(str(document.get("sha256", "")) for document in documents if document.get("sha256"))
+    )
+    verified_hashes = [
+        digest
+        for digest in current_hashes
+        if updated_registry["documents"].get(digest, {}).get("ocr_status") == "passed"
+    ]
+    document_failures = [digest for digest in current_hashes if digest not in verified_hashes]
     report = {
         "generated_at": datetime.now(BEIJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S"),
         "review_html": str(html_path),
         "documents": len(documents),
+        "unique_hashes": len(seen_hashes),
+        "documents_ocr_checked": len(pending),
+        "documents_ocr_skipped": len(seen_hashes) - len(pending),
+        "hashes_ocr_checked": len(pending),
+        "hashes_ocr_skipped": len(seen_hashes) - len(pending),
         "structural_pages_checked": structural["pages"],
         "structural_tables_checked": structural["tables"],
         "structural_rows_checked": structural["rows"],
@@ -156,7 +199,9 @@ def verify_pdf_html_ocr(
         "minimum_observed_number_similarity": min(
             (item["number_similarity"] for item in comparisons), default=1.0
         ),
-        "passed": structural["match"] and not failures,
+        "passed": structural["match"] and not failures and not document_failures,
+        "verified_sha256": verified_hashes,
+        "unverified_sha256": document_failures,
         "failures": failures,
     }
     report_path = review_dir / "pdf_html_ocr_comparison.json"

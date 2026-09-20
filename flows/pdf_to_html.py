@@ -14,6 +14,7 @@ if ROOT_PATH not in sys.path:
     sys.path.insert(0, ROOT_PATH)
 
 from flows.entrypoints import bootstrap_context, print_json
+from flows.modules.pdf_html_ocr_verifier import verify_pdf_html_ocr
 from flows.workflows.pdf_html_review import run
 
 
@@ -27,6 +28,11 @@ def parse_args() -> argparse.Namespace:
         help="Output directory for cache, manifest and review HTML.",
     )
     parser.add_argument("--force", action="store_true", help="Re-extract unchanged PDF files.")
+    parser.add_argument(
+        "--skip-ocr-verify",
+        action="store_true",
+        help="Generate HTML without OCR-verifying newly discovered PDF hashes.",
+    )
     return parser.parse_args()
 
 
@@ -39,8 +45,18 @@ def main() -> int:
         output_dir=args.output_dir,
         force=args.force,
     )
+    if not args.skip_ocr_verify and not summary["failed"]:
+        summary["ocr_verification"] = verify_pdf_html_ocr(ctx.resolve_path(args.output_dir))
+        if summary["ocr_verification"]["documents_ocr_checked"]:
+            run(
+                ctx=ctx,
+                input_root=args.input_root,
+                output_dir=args.output_dir,
+                force=False,
+            )
     print_json(summary)
-    return 0 if not summary["failed"] else 1
+    ocr_passed = summary.get("ocr_verification", {}).get("passed", True)
+    return 0 if not summary["failed"] and ocr_passed else 1
 
 
 if __name__ == "__main__":

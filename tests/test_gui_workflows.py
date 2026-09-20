@@ -122,9 +122,13 @@ class WorkflowCommandTests(unittest.TestCase):
             "processed_data/pdf_html_review",
         )
         self.assertNotIn("--force", command)
+        self.assertNotIn("--skip-ocr-verify", command)
         values["force"] = True
         command = build_command(WORKFLOW_BY_KEY["pdf_html_review"], values, Path("project"))
         self.assertIn("--force", command)
+        values["verify_new_ocr"] = False
+        command = build_command(WORKFLOW_BY_KEY["pdf_html_review"], values, Path("project"))
+        self.assertIn("--skip-ocr-verify", command)
 
     def test_command_preview_masks_device_serial(self) -> None:
         preview = format_command(["python", "capture.py", "--device", "ABCD12345678"])

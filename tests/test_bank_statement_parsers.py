@@ -16,6 +16,7 @@ from flows.modules.financial_attachment_reader import (
     _parse_icbc_pdf_line,
     _read_alipay_legacy_csv_rows,
     _read_generic_bank_rows,
+    _read_pdf_transactions,
     _read_wechat_rows,
     read_attachment_transactions,
 )
@@ -136,6 +137,21 @@ CN
 
 
 class AttachmentParserTests(unittest.TestCase):
+    def test_pdf_parser_uses_reviewed_hash_cache_without_reading_pdf(self) -> None:
+        cached = """卡号：4135200057130789
+2015-07-15
+14:03:55 6225970027495670 借 人民币 441.56 人民币 441.56 -441.56 消费 示例医院
+"""
+        with patch(
+            "flows.modules.financial_attachment_reader.read_cached_pdf_text",
+            return_value=cached,
+        ), patch("pypdf.PdfReader", side_effect=AssertionError("source PDF should not be read")):
+            rows = _read_pdf_transactions(Path("statement.pdf"), {"bank_key": "icbc"})
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["amount"], "441.56")
+        self.assertEqual(rows[0]["direction"], "outflow")
+
     def test_parses_legacy_alipay_purchase_and_refund_but_skips_neutral_transfer(self) -> None:
         rows = _read_alipay_legacy_csv_rows(
             Path("alipay.csv"),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import csv
+import logging
 import re
 from io import StringIO
 from pathlib import Path
@@ -9,6 +10,7 @@ from typing import Any
 
 from flows.modules.bank_transaction_schema import make_transaction, parse_money_token
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
+from flows.modules.pdf_table_html import read_cached_pdf_text
 
 
 DATE_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -22,6 +24,7 @@ STANDALONE_BANK_FILES = {
         "bank_name": "光大银行",
     },
 }
+logger = logging.getLogger(__name__)
 
 
 def read_standalone_bank_transactions(
@@ -157,10 +160,15 @@ def _unresolved_file(
 
 
 def _read_pdf_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
-    from pypdf import PdfReader
+    text = read_cached_pdf_text(path)
+    if text is None:
+        from pypdf import PdfReader
 
-    reader = PdfReader(str(path))
-    text = "\n".join(_fix_mojibake(page.extract_text() or "") for page in reader.pages)
+        logger.info("PDF hash cache miss; reading source PDF: %s", path)
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+    else:
+        logger.info("PDF hash cache hit; using reviewed extraction: %s", path)
+    text = "\n".join(_fix_mojibake(line) for line in text.splitlines())
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     account_tail = _account_tail_from_lines(lines)
     account_full_name = _account_full_from_lines(lines)
@@ -776,6 +784,9 @@ def _read_attachment_with_ai(
 def _attachment_text(path: Path) -> str:
     suffix = path.suffix.lower()
     if suffix == ".pdf":
+        cached = read_cached_pdf_text(path)
+        if cached is not None:
+            return "\n".join(_fix_mojibake(line) for line in cached.splitlines())
         from pypdf import PdfReader
 
         return "\n".join(_fix_mojibake(page.extract_text() or "") for page in PdfReader(str(path)).pages)

@@ -105,11 +105,14 @@ CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务
 ```text
 processed_data/pdf_html_review/bank_pdf_tables_review.html
 processed_data/pdf_html_review/pdf_html_manifest.json
+processed_data/pdf_html_review/pdf_hash_index.json
 processed_data/pdf_html_review/cache/<PDF SHA-256>.json
 ```
 
-也可从命令行执行 `python flows/pdf_to_html.py`；只有表格提取规则更新或需要重新诊断时才使用
-`--force`。HTML 是便于筛选和核对的结构化复刻，原 PDF 仍是版式及内容的最终依据。
+`pdf_hash_index.json` 是持久哈希索引，保存每份本地 PDF 的完整 SHA-256、来源路径、首次/最近发现时间、
+提取缓存状态和 OCR 核验状态。GUI 默认只对索引中尚未通过核验的新哈希执行 OCR；文件改名或移动但内容
+不变时仍视为同一份文件。也可从命令行执行 `python flows/pdf_to_html.py`；只有表格提取规则更新或需要
+重新诊断时才使用 `--force`。HTML 是便于筛选和核对的结构化复刻，原 PDF 仍是版式及内容的最终依据。
 
 生成后可执行独立一致性核验：
 
@@ -121,6 +124,12 @@ python flows/pdf_html_ocr_compare.py
 的首、中、末代表页和对应 HTML 表格，通过 RapidOCR 独立识别并比较字符及数字。默认字符相似度门槛为
 90%，数字相似度门槛为 95%；200 DPI 未通过的原 PDF 小字号页面自动以 300 DPI 复核。结果写入
 `processed_data/pdf_html_review/pdf_html_ocr_comparison.json`，任一结构或 OCR 检查不通过时命令返回非零状态。
+已经通过 OCR 的哈希默认跳过；需要重新核验全部历史文件时使用
+`python flows/pdf_html_ocr_compare.py --force`。
+
+归一化读取 PDF 时也按完整 SHA-256 查找同一缓存。旧哈希直接使用人工审核 PDF 阶段保存的原始解析文本，
+不重新打开或扫描 PDF；只有没有缓存的新哈希才回退读取源 PDF。缓存文本保存自身 SHA-256，确保内容未被
+静默改写。
 
 ## 环境准备
 

@@ -137,6 +137,7 @@ def _pdf_html_review(values: Values) -> tuple[str, list[str]]:
     _add(args, "--input-root", values.get("input_root", "raw_data/bank"))
     _add(args, "--output-dir", values.get("output_dir", "processed_data/pdf_html_review"))
     _add(args, "--force", values.get("force", False))
+    _add(args, "--skip-ocr-verify", not values.get("verify_new_ocr", True))
     return "pdf_to_html.py", args
 
 
@@ -284,7 +285,7 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
         "PDF 转 HTML 审核",
         (
             "识别银行流水 PDF 中的原始表格并生成独立 HTML 人工审核集；按 PDF 完整 SHA-256 缓存，"
-            "文件未变化时直接复用，不重复逐页扫描。"
+            "文件未变化时直接复用，默认只对新哈希执行 OCR 核验。"
         ),
         (
             FieldSpec("input_root", "PDF 根目录", "directory", "raw_data/bank", required=True),
@@ -301,6 +302,13 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
                 "bool",
                 False,
                 help_text="默认不勾选；只有 PDF 版式识别规则更新后才需要重跑",
+            ),
+            FieldSpec(
+                "verify_new_ocr",
+                "仅 OCR 核验新 PDF",
+                "bool",
+                True,
+                help_text="已通过核验的 SHA-256 自动跳过；取消勾选则只生成 HTML",
             ),
         ),
         _pdf_html_review,

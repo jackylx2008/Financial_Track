@@ -3,6 +3,11 @@ from __future__ import annotations
 import unittest
 
 from flows.modules.pdf_html_ocr_verifier import comparison_metrics, representative_pages
+from flows.modules.pdf_hash_registry import (
+    load_pdf_hash_registry,
+    update_ocr_status,
+    write_pdf_hash_registry,
+)
 
 
 class PdfHtmlOcrVerifierTests(unittest.TestCase):
@@ -18,6 +23,20 @@ class PdfHtmlOcrVerifierTests(unittest.TestCase):
         self.assertEqual(same["character_similarity"], 1.0)
         self.assertEqual(same["number_similarity"], 1.0)
         self.assertLess(changed["number_similarity"], 1.0)
+
+    def test_registry_tracks_ocr_status_by_sha256(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as directory:
+            review_dir = Path(directory)
+            registry = load_pdf_hash_registry(review_dir)
+            registry["documents"]["a" * 64] = {"sha256": "a" * 64, "ocr_status": "pending"}
+            write_pdf_hash_registry(review_dir, registry)
+            updated = update_ocr_status(review_dir, {"a" * 64: "passed"})
+
+            self.assertEqual(updated["documents"]["a" * 64]["ocr_status"], "passed")
+            self.assertTrue(updated["documents"]["a" * 64]["ocr_verified_at"])
 
 
 if __name__ == "__main__":

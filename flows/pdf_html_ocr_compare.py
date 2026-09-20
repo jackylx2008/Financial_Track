@@ -25,6 +25,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--character-threshold", type=float, default=0.9)
     parser.add_argument("--number-threshold", type=float, default=0.95)
     parser.add_argument("--dpi", type=int, default=200)
+    parser.add_argument("--force", action="store_true", help="Re-run OCR for hashes already verified.")
     return parser.parse_args()
 
 
@@ -37,6 +38,7 @@ def main() -> int:
         min_character_similarity=args.character_threshold,
         min_number_similarity=args.number_threshold,
         dpi=max(96, args.dpi),
+        force=args.force,
     )
     print_json(result)
     return 0 if result["passed"] else 1
