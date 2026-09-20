@@ -257,7 +257,6 @@ def _merge_transactions(existing: dict[str, Any], incoming: dict[str, Any]) -> d
         "summary",
         "balance",
         "channel",
-        "transaction_type",
         "transaction_reference",
     ]:
         if not merged.get(field) and incoming.get(field):

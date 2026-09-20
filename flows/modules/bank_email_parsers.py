@@ -159,7 +159,6 @@ def _parse_cmb_transaction_block(
             "merchant": merchant,
             "counterparty": merchant,
             "summary": " ".join(raw_lines),
-            "transaction_type": lines[start],
             "transaction_reference": "",
             "confidence": 0.92,
             "parser": "cmb_credit_card_statement_v1",
@@ -216,7 +215,6 @@ def _apply_icbc_statement_fields(
         return
     description = detail_match.group("description")
     transaction_type, _, merchant = description.partition(" ")
-    result["transaction_type"] = transaction_type.strip()
     result["merchant"] = merchant.strip()
     result["counterparty"] = merchant.strip()
     result["currency"] = detail_match.group("currency").upper()

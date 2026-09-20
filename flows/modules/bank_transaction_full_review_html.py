@@ -33,7 +33,7 @@ def _review_row(transaction: dict[str, Any]) -> dict[str, Any]:
     source_records = transaction.get("source_records", [])
     bank_name = str(transaction.get("bank_name") or transaction.get("bank_key") or "—")
     card_type = _card_type(transaction)
-    merchant, counterparty_account, channel, transaction_type = _unified_party_fields(transaction)
+    merchant, counterparty_account, channel = _unified_party_fields(transaction)
     return {
         "id": str(transaction.get("transaction_id", "")),
         "institution": f"{bank_name}{card_type}",
@@ -54,7 +54,6 @@ def _review_row(transaction: dict[str, Any]) -> dict[str, Any]:
         "summary": str(transaction.get("summary") or "—"),
         "balance": str(transaction.get("balance") or "—"),
         "channel": channel,
-        "transaction_type": transaction_type,
         "reference": str(transaction.get("transaction_reference") or "—"),
         "confidence": float(transaction.get("confidence", 0)),
         "warnings": [str(item) for item in transaction.get("warnings", [])],
@@ -98,25 +97,19 @@ def _account_tail_display(transaction: dict[str, Any]) -> str:
     return " / ".join(dict.fromkeys(values)) or "—"
 
 
-def _unified_party_fields(transaction: dict[str, Any]) -> tuple[str, str, str, str]:
+def _unified_party_fields(transaction: dict[str, Any]) -> tuple[str, str, str]:
     merchant = _merged_merchant(transaction)
     counterparty_account = str(transaction.get("counterparty_account") or "").strip()
     channel = str(transaction.get("channel") or "").strip()
-    transaction_type = str(transaction.get("transaction_type") or "").strip()
     raw = transaction.get("raw_record")
     if isinstance(raw, dict):
         counterparty_account = counterparty_account or _raw_value(
             raw, "对方账号", "对方账户", "对方卡号", "收款账号", "付款账号"
         )
-        transaction_type = transaction_type or _raw_value(
-            raw, "交易类型", "业务类型", "交易种类", "业务种类", "交易类别"
-        )
         raw_line = str(raw.get("line") or "")
         if str(transaction.get("bank_key")) == "icbc" and raw_line:
             tokens = raw_line.split()
-            if len(tokens) >= 3 and tokens[2] in {"借", "贷"}:
-                transaction_type = transaction_type or tokens[2]
-            else:
+            if not (len(tokens) >= 3 and tokens[2] in {"借", "贷"}):
                 amount_index = next(
                     (index for index, token in enumerate(tokens) if re.match(r"^[+-]\d[\d,]*\.\d{2}$", token)),
                     -1,
@@ -129,8 +122,6 @@ def _unified_party_fields(transaction: dict[str, Any]) -> tuple[str, str, str, s
                         counterparty_account = trailing[1]
                     if len(trailing) >= 3:
                         channel = trailing[-1]
-                    if amount_index >= 1:
-                        transaction_type = transaction_type or tokens[amount_index - 1]
     parsed_name, parsed_account = _split_counterparty(merchant)
     if parsed_account:
         merchant = parsed_name or "—"
@@ -139,7 +130,6 @@ def _unified_party_fields(transaction: dict[str, Any]) -> tuple[str, str, str, s
         merchant or "—",
         counterparty_account or "—",
         channel or "—",
-        transaction_type or "—",
     )
 
 
@@ -230,19 +220,18 @@ HTML_TEMPLATE = r'''<!doctype html>
 <div class="filter"><label for="currencyFilter">币种</label><select id="currencyFilter"><option value="">全部币种</option></select></div>
 <div class="filter"><label for="merchantFilter">商户全名</label><input id="merchantFilter" placeholder="商户或交易对方"></div>
 <div class="filter"><label for="accountFilter">对方账号</label><input id="accountFilter" placeholder="账号或卡号"></div>
-<div class="filter"><label for="typeFilter">交易类型</label><input id="typeFilter" placeholder="交易或业务类型"></div>
 <div class="filter"><label for="summaryFilter">摘要</label><input id="summaryFilter" placeholder="交易摘要"></div>
 <div class="filter"><label for="channelFilter">渠道</label><input id="channelFilter" placeholder="交易渠道"></div>
 <div class="filter"><label for="sourceFilter">来源</label><select id="sourceFilter"><option value="">全部来源</option></select></div>
 </section>
 <div class="pager"><button id="prev">上一页</button><button id="next">下一页</button><label>每页 <select id="pageSize"><option>100</option><option selected>250</option><option>500</option><option>1000</option></select> 条</label><span class="pager-info" id="pageInfo"></span></div>
-<div class="table-wrap"><table><thead><tr><th style="width:45px">#</th><th style="width:145px">机构/卡片类型</th><th style="width:75px">账户尾号</th><th style="width:80px">交易卡尾号</th><th style="width:65px">主/副卡</th><th style="width:145px">交易日期</th><th style="width:95px">入账日期</th><th style="width:65px">方向</th><th style="width:105px">交易金额</th><th style="width:70px">币种</th><th style="width:220px">商户/对方全名</th><th style="width:180px">对方账号</th><th style="width:110px">交易类型</th><th style="width:235px">摘要</th><th style="width:105px">渠道</th><th style="width:250px">来源定位/其他</th></tr></thead><tbody id="body"></tbody></table><div id="empty" class="empty" hidden>没有符合筛选条件的交易。</div></div>
+<div class="table-wrap"><table><thead><tr><th style="width:45px">#</th><th style="width:145px">机构/卡片类型</th><th style="width:75px">账户尾号</th><th style="width:80px">交易卡尾号</th><th style="width:65px">主/副卡</th><th style="width:145px">交易日期</th><th style="width:95px">入账日期</th><th style="width:65px">方向</th><th style="width:105px">交易金额</th><th style="width:70px">币种</th><th style="width:220px">商户/对方全名</th><th style="width:180px">对方账号</th><th style="width:235px">摘要</th><th style="width:105px">渠道</th><th style="width:250px">来源定位/其他</th></tr></thead><tbody id="body"></tbody></table><div id="empty" class="empty" hidden>没有符合筛选条件的交易。</div></div>
 </main><script id="reviewData" type="application/json">__REVIEW_DATA__</script><script>
 const data=JSON.parse(document.getElementById('reviewData').textContent),$=id=>document.getElementById(id);let page=1,filtered=[];const directionLabel={inflow:'收入',outflow:'支出',unknown:'未知'};$('subtitle').textContent=`生成时间：${data.generated_at} · 离线文件 · 共 ${data.record_count.toLocaleString()} 条`;$('total').textContent=data.record_count.toLocaleString();$('institutionCount').textContent=data.institutions.length;$('warningCount').textContent=data.rows.filter(row=>row.warnings.length).length.toLocaleString();
 function addOptions(id,values){values.forEach(value=>{const option=document.createElement('option');option.value=value;option.textContent=value;$(id).append(option)})}addOptions('institutionFilter',data.institutions);addOptions('currencyFilter',data.currencies);addOptions('sourceFilter',data.sources);
 function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text??'—');if(className)el.className=className;return el}function amountMatches(value,range){if(!range)return true;if(value===null)return false;if(range==='40000+')return value>=40000;const [low,high]=range.split('-').map(Number);return value>=low&&value<high}function textIncludes(value,query){return String(value||'').toLowerCase().includes(query)}
-function applyFilters(){const query=$('search').value.trim().toLowerCase(),institution=$('institutionFilter').value,tail=$('tailFilter').value.trim(),dateFrom=$('dateFrom').value,dateTo=$('dateTo').value,direction=$('directionFilter').value,amount=$('amountFilter').value,currency=$('currencyFilter').value,merchant=$('merchantFilter').value.trim().toLowerCase(),account=$('accountFilter').value.trim().toLowerCase(),type=$('typeFilter').value.trim().toLowerCase(),summary=$('summaryFilter').value.trim().toLowerCase(),channel=$('channelFilter').value.trim().toLowerCase(),source=$('sourceFilter').value;filtered=data.rows.filter(row=>{const date=(row.transaction_time==='—'?row.posting_date:row.transaction_time).slice(0,10);return(!query||JSON.stringify(row).toLowerCase().includes(query))&&(!institution||row.institution===institution)&&(!tail||textIncludes(row.account_tail,tail))&&(!dateFrom||date>=dateFrom)&&(!dateTo||date<=dateTo)&&(!direction||row.direction===direction)&&amountMatches(row.amount_value,amount)&&(!currency||row.currency===currency)&&(!merchant||textIncludes(row.merchant,merchant))&&(!account||textIncludes(row.counterparty_account,account))&&(!type||textIncludes(row.transaction_type,type))&&(!summary||textIncludes(row.summary,summary))&&(!channel||textIncludes(row.channel,channel))&&(!source||row.source_types.includes(source))});page=1;render()}
+function applyFilters(){const query=$('search').value.trim().toLowerCase(),institution=$('institutionFilter').value,tail=$('tailFilter').value.trim(),dateFrom=$('dateFrom').value,dateTo=$('dateTo').value,direction=$('directionFilter').value,amount=$('amountFilter').value,currency=$('currencyFilter').value,merchant=$('merchantFilter').value.trim().toLowerCase(),account=$('accountFilter').value.trim().toLowerCase(),summary=$('summaryFilter').value.trim().toLowerCase(),channel=$('channelFilter').value.trim().toLowerCase(),source=$('sourceFilter').value;filtered=data.rows.filter(row=>{const date=(row.transaction_time==='—'?row.posting_date:row.transaction_time).slice(0,10);return(!query||JSON.stringify(row).toLowerCase().includes(query))&&(!institution||row.institution===institution)&&(!tail||textIncludes(row.account_tail,tail))&&(!dateFrom||date>=dateFrom)&&(!dateTo||date<=dateTo)&&(!direction||row.direction===direction)&&amountMatches(row.amount_value,amount)&&(!currency||row.currency===currency)&&(!merchant||textIncludes(row.merchant,merchant))&&(!account||textIncludes(row.counterparty_account,account))&&(!summary||textIncludes(row.summary,summary))&&(!channel||textIncludes(row.channel,channel))&&(!source||row.source_types.includes(source))});page=1;render()}
 async function openSource(event,link,status){if(location.protocol!=='http:'&&location.protocol!=='https:')return;event.preventDefault();status.textContent='正在调用本机默认程序…';try{const url=new URL('/open-source',location.origin);url.searchParams.set('path',link.dataset.path);url.searchParams.set('token',new URLSearchParams(location.search).get('token')||'');const response=await fetch(url);const result=await response.json();if(!response.ok)throw new Error(result.error||'打开失败');status.textContent='已交给本机默认程序';}catch(error){status.textContent=`打开失败：${error.message}`}}
-function appendCell(tr,value,className){tr.append(node('td',value||'—',className))}function render(){const size=Number($('pageSize').value),pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages);const start=(page-1)*size,rows=filtered.slice(start,start+size),body=$('body');body.replaceChildren();rows.forEach((row,index)=>{const tr=node('tr');appendCell(tr,start+index+1);appendCell(tr,row.institution);appendCell(tr,row.account_tail);appendCell(tr,row.transaction_card_tail);appendCell(tr,row.card_role);appendCell(tr,row.transaction_time);appendCell(tr,row.posting_date);const dir=node('td'),badge=node('span',directionLabel[row.direction]||'未知',`badge ${row.direction||'unknown'}`);dir.append(badge);tr.append(dir);appendCell(tr,row.amount,'money');appendCell(tr,row.currency);appendCell(tr,row.merchant);appendCell(tr,row.counterparty_account);appendCell(tr,row.transaction_type);appendCell(tr,row.summary,'summary');appendCell(tr,row.channel);const other=node('td',undefined,'extra'),details=node('details'),detailTitle=node('summary',`定位 ${row.source_locations.length} 处 · 置信度 ${(row.confidence*100).toFixed(0)}%`),content=node('div',[`来源：${row.source_types.join('、')||'—'}`,`余额：${row.balance}`,`参考号：${row.reference}`].join('\n')),status=node('div','', 'open-status');details.append(detailTitle,content);row.source_links.forEach(item=>{const link=node('a',`打开：${item.label}`,'source-link');link.href=item.uri||'#';link.target='_blank';link.rel='noopener';link.dataset.path=item.path;link.addEventListener('click',event=>openSource(event,link,status));details.append(link)});details.append(status);other.append(details);if(row.warnings.length)other.append(node('div',row.warnings.join('；'),'warnings'));tr.append(other);body.append(tr)});$('filtered').textContent=filtered.length.toLocaleString();$('pageInfo').textContent=`第 ${page} / ${pages} 页，显示 ${rows.length} 条，共 ${filtered.length.toLocaleString()} 条`;$('prev').disabled=page<=1;$('next').disabled=page>=pages;$('empty').hidden=filtered.length!==0}
-['search','institutionFilter','tailFilter','dateFrom','dateTo','directionFilter','amountFilter','currencyFilter','merchantFilter','accountFilter','typeFilter','summaryFilter','channelFilter','sourceFilter'].forEach(id=>$(id).addEventListener($(id).tagName==='INPUT'?'input':'change',applyFilters));$('pageSize').addEventListener('change',()=>{page=1;render()});$('prev').addEventListener('click',()=>{if(page>1){page--;render()}});$('next').addEventListener('click',()=>{const pages=Math.ceil(filtered.length/Number($('pageSize').value));if(page<pages){page++;render()}});applyFilters();
+function appendCell(tr,value,className){tr.append(node('td',value||'—',className))}function render(){const size=Number($('pageSize').value),pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages);const start=(page-1)*size,rows=filtered.slice(start,start+size),body=$('body');body.replaceChildren();rows.forEach((row,index)=>{const tr=node('tr');appendCell(tr,start+index+1);appendCell(tr,row.institution);appendCell(tr,row.account_tail);appendCell(tr,row.transaction_card_tail);appendCell(tr,row.card_role);appendCell(tr,row.transaction_time);appendCell(tr,row.posting_date);const dir=node('td'),badge=node('span',directionLabel[row.direction]||'未知',`badge ${row.direction||'unknown'}`);dir.append(badge);tr.append(dir);appendCell(tr,row.amount,'money');appendCell(tr,row.currency);appendCell(tr,row.merchant);appendCell(tr,row.counterparty_account);appendCell(tr,row.summary,'summary');appendCell(tr,row.channel);const other=node('td',undefined,'extra'),details=node('details'),detailTitle=node('summary',`定位 ${row.source_locations.length} 处 · 置信度 ${(row.confidence*100).toFixed(0)}%`),content=node('div',[`来源：${row.source_types.join('、')||'—'}`,`余额：${row.balance}`,`参考号：${row.reference}`].join('\n')),status=node('div','', 'open-status');details.append(detailTitle,content);row.source_links.forEach(item=>{const link=node('a',`打开：${item.label}`,'source-link');link.href=item.uri||'#';link.target='_blank';link.rel='noopener';link.dataset.path=item.path;link.addEventListener('click',event=>openSource(event,link,status));details.append(link)});details.append(status);other.append(details);if(row.warnings.length)other.append(node('div',row.warnings.join('；'),'warnings'));tr.append(other);body.append(tr)});$('filtered').textContent=filtered.length.toLocaleString();$('pageInfo').textContent=`第 ${page} / ${pages} 页，显示 ${rows.length} 条，共 ${filtered.length.toLocaleString()} 条`;$('prev').disabled=page<=1;$('next').disabled=page>=pages;$('empty').hidden=filtered.length!==0}
+['search','institutionFilter','tailFilter','dateFrom','dateTo','directionFilter','amountFilter','currencyFilter','merchantFilter','accountFilter','summaryFilter','channelFilter','sourceFilter'].forEach(id=>$(id).addEventListener($(id).tagName==='INPUT'?'input':'change',applyFilters));$('pageSize').addEventListener('change',()=>{page=1;render()});$('prev').addEventListener('click',()=>{if(page>1){page--;render()}});$('next').addEventListener('click',()=>{const pages=Math.ceil(filtered.length/Number($('pageSize').value));if(page<pages){page++;render()}});applyFilters();
 </script></body></html>'''

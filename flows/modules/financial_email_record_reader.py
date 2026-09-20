@@ -92,7 +92,6 @@ def _structured_candidate_to_transaction(
         merchant=str(candidate.get("merchant", "")),
         counterparty=str(candidate.get("counterparty", "")),
         summary=str(candidate.get("summary", "")),
-        transaction_type=str(candidate.get("transaction_type", "")),
         transaction_reference=str(candidate.get("transaction_reference", "")),
         source_records=[_email_source_record(record, index)],
         confidence=float(candidate.get("confidence", 0.75)),

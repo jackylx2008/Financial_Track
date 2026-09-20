@@ -282,7 +282,9 @@ def _parse_icbc_pdf_line(
     trailing_fields = tokens[amount_index + 2 :]
     counterparty = trailing_fields[0] if trailing_fields else ""
     counterparty_account = trailing_fields[1] if len(trailing_fields) >= 2 else ""
-    channel = trailing_fields[-1] if len(trailing_fields) >= 3 else tokens[amount_index - 1]
+    # 工行借记卡流水中，金额前一列是地区代码，不是交易渠道。只有尾部同时
+    # 存在“对方户名、对方账号、渠道”三列时才读取渠道；原始行仍完整保存。
+    channel = trailing_fields[-1] if len(trailing_fields) >= 3 else ""
     return make_transaction(
         bank_key=str(manifest_item.get("bank_key", "icbc") or "icbc"),
         bank_name="工商银行",
@@ -297,7 +299,6 @@ def _parse_icbc_pdf_line(
         merchant=counterparty,
         counterparty_account=counterparty_account,
         channel=channel,
-        transaction_type=tokens[amount_index - 1] if amount_index >= 1 else "",
         source_records=[
             {
                 "source_type": "email_attachment_pdf",
@@ -348,7 +349,6 @@ def _parse_icbc_credit_card_line(
         counterparty=counterparty,
         summary=summary,
         balance=balance,
-        transaction_type=tokens[2],
         source_records=[
             {
                 "source_type": "email_attachment_pdf",
@@ -550,7 +550,6 @@ def _read_generic_bank_rows(
                     "交易网点",
                     "交易机构",
                 ),
-                transaction_type=transaction_type,
                 transaction_reference=_first_value(row, "流水号", "交易流水号", "参考号", "交易序号"),
                 source_records=[source],
                 confidence=0.9,

@@ -168,7 +168,7 @@ def _build_prompt(text: str, bank_key: str, bank_name: str, source_label: str) -
 返回严格 JSON 对象：
 {{"transactions":[{{"transaction_time":"YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD","posting_date":"YYYY-MM-DD 或空",
 "amount":"绝对金额","direction":"inflow|outflow|unknown","merchant":"商户名称或空","counterparty":"对方户名或空",
-"counterparty_account":"对方账号或空","transaction_type":"交易类型或空","channel":"交易渠道或空","summary":"",
+"counterparty_account":"对方账号或空","channel":"交易渠道或空","summary":"",
 "account_full_name":"完整账户名称或号码，原文没有则为空","account_tail":"仅四位或空","currency":"CNY","transaction_reference":""}}]}}
 银行代码：{bank_key}；银行名称：{bank_name}；来源类型：{source_label}
 文档内容：
@@ -188,7 +188,7 @@ def _build_ocr_prompt(
 返回严格 JSON 对象，不要 Markdown：
 {{"transactions":[{{"transaction_time":"YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD","posting_date":"YYYY-MM-DD 或空",
 "amount":"绝对金额","direction":"inflow|outflow|unknown","merchant":"商户名称或空","counterparty":"对方户名或空",
-"counterparty_account":"对方账号或空","transaction_type":"交易类型或空","channel":"交易渠道或空","summary":"",
+"counterparty_account":"对方账号或空","channel":"交易渠道或空","summary":"",
 "account_full_name":"完整账户名称或号码，原图没有则为空","account_tail":"仅四位或空","currency":"CNY","transaction_reference":""}}]}}
 银行代码：{bank_key}；银行名称：{bank_name}；来源类型：{source_label}；PDF 页码：{page_number}
 """
@@ -266,7 +266,6 @@ def _row_to_transaction(
         counterparty_account=str(row.get("counterparty_account", "")).strip(),
         summary=str(row.get("summary", "")).strip(),
         channel=str(row.get("channel", "")).strip(),
-        transaction_type=str(row.get("transaction_type", "")).strip(),
         transaction_reference=str(row.get("transaction_reference", "")).strip(),
         source_records=[source_record],
         confidence=0.68,

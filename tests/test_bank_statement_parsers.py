@@ -128,7 +128,7 @@ CN
         self.assertEqual(by_tail["6943"]["card_role"], "副卡")
         self.assertEqual(by_tail["5670"]["posting_date"], "2026-08-02")
         self.assertEqual(by_tail["5670"]["merchant"], "示例主卡商户")
-        self.assertEqual(by_tail["5670"]["transaction_type"], "POS消费")
+        self.assertNotIn("transaction_type", by_tail["5670"])
         self.assertTrue(all(row["card_type"] == "信用卡" for row in rows))
 
 
@@ -138,7 +138,7 @@ class AttachmentParserTests(unittest.TestCase):
             date="2018-03-30",
             detail_line=(
                 "09:01:24 0200214201022415827 活期 00000 人民币 钞 "
-                "消费 1202 -10,000.00 7,378.00 示例商户 6222000012345678 POS交易"
+                "消费 1202 -10,000.00 7,378.00 示例商户 6222****5678 POS交易"
             ),
             account_tail="6993",
             account_full_name="6212260200141026993",
@@ -155,8 +155,35 @@ class AttachmentParserTests(unittest.TestCase):
         self.assertEqual(row["direction"], "outflow")
         self.assertEqual(row["merchant"], "示例商户")
         self.assertEqual(row["counterparty"], "示例商户")
-        self.assertEqual(row["counterparty_account"], "6222000012345678")
+        self.assertEqual(row["counterparty_account"], "6222****5678")
         self.assertEqual(row["channel"], "POS交易")
+        self.assertNotIn("transaction_type", row)
+        self.assertEqual(
+            row["raw_record"]["line"],
+            "09:01:24 0200214201022415827 活期 00000 人民币 钞 "
+            "消费 1202 -10,000.00 7,378.00 示例商户 6222****5678 POS交易",
+        )
+
+    def test_icbc_debit_region_is_not_used_as_channel(self) -> None:
+        row = _parse_icbc_pdf_line(
+            date="2018-03-27",
+            detail_line=(
+                "18:15:22 0200214201022415827 活期 00000 人民币 钞 "
+                "代发工资 0200 +17,378.00 17,378.00 示例单位"
+            ),
+            account_tail="6993",
+            account_full_name="6212260200141026993",
+            path=Path("statement.pdf"),
+            manifest_item={"bank_key": "icbc"},
+            page_hint="1",
+        )
+
+        self.assertIsNotNone(row)
+        assert row is not None
+        self.assertEqual(row["counterparty"], "示例单位")
+        self.assertEqual(row["counterparty_account"], "")
+        self.assertEqual(row["channel"], "")
+        self.assertNotIn("transaction_type", row)
 
     def test_icbc_credit_card_pdf_uses_transaction_amount_not_balance(self) -> None:
         row = _parse_icbc_pdf_line(
@@ -258,7 +285,7 @@ class AttachmentParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["merchant"], "示例商户")
         self.assertEqual(rows[0]["counterparty_account"], "6217000000001234")
         self.assertEqual(rows[0]["channel"], "手机银行")
-        self.assertEqual(rows[0]["transaction_type"], "转账")
+        self.assertNotIn("transaction_type", rows[0])
 
     def test_reports_attachment_without_automatic_transactions(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -346,7 +373,6 @@ class FilteringAndReviewTests(unittest.TestCase):
             "summaryFilter",
             "channelFilter",
             "accountFilter",
-            "typeFilter",
             "sourceFilter",
         ):
             self.assertIn(f'id="{filter_id}"', html)
@@ -357,7 +383,7 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn("6227000000005678", html)
         self.assertIn("商户/对方全名", html)
         self.assertIn("对方账号", html)
-        self.assertIn("交易类型", html)
+        self.assertNotIn("交易类型", html)
         self.assertIn("openSource", html)
         self.assertIn("完整且不脱敏的交易摘要", html)
         self.assertIn("5200.25", html)
