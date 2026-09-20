@@ -132,6 +132,8 @@
 - 汇总生成 `processed_data/pdf_html_review/bank_pdf_tables_review.html`，可按机构、PDF 和页码切换。
 - HTML 保持原表格的行列顺序和列宽比例，并提供调用本机默认程序打开原 PDF 的入口。
 - 未识别到稳定表格的页面保留明确提示，避免把无结果误认为空账单。
+- `flows/pdf_html_ocr_compare.py` 对缓存矩阵与 HTML 做全量严格等值检查，并对每份 PDF 的首、中、末页
+  分别渲染原表格和 HTML 表格进行独立 OCR 对比；低分辨率边缘页自动提高到 300 DPI 复核。
 
 缓存和 HTML 均包含个人财务信息，只保存在被 Git 忽略的 `processed_data/` 中。
 

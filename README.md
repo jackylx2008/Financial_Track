@@ -111,6 +111,17 @@ processed_data/pdf_html_review/cache/<PDF SHA-256>.json
 也可从命令行执行 `python flows/pdf_to_html.py`；只有表格提取规则更新或需要重新诊断时才使用
 `--force`。HTML 是便于筛选和核对的结构化复刻，原 PDF 仍是版式及内容的最终依据。
 
+生成后可执行独立一致性核验：
+
+```powershell
+python flows/pdf_html_ocr_compare.py
+```
+
+核验分为两层：先逐页、逐表格、逐单元格检查缓存矩阵与 HTML 内嵌数据完全相同；再分别渲染每份 PDF
+的首、中、末代表页和对应 HTML 表格，通过 RapidOCR 独立识别并比较字符及数字。默认字符相似度门槛为
+90%，数字相似度门槛为 95%；200 DPI 未通过的原 PDF 小字号页面自动以 300 DPI 复核。结果写入
+`processed_data/pdf_html_review/pdf_html_ocr_comparison.json`，任一结构或 OCR 检查不通过时命令返回非零状态。
+
 ## 环境准备
 
 建议使用 Python 3.11+。
