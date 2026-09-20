@@ -24,7 +24,7 @@ def default_values(workflow_key: str) -> dict[str, str | bool]:
 class WorkflowCommandTests(unittest.TestCase):
     def test_every_workflow_builds_an_existing_entrypoint_from_defaults(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
-        self.assertEqual(len(WORKFLOW_BY_KEY), 9)
+        self.assertEqual(len(WORKFLOW_BY_KEY), 10)
         for key, spec in WORKFLOW_BY_KEY.items():
             with self.subTest(workflow=key):
                 command = build_command(spec, default_values(key), project_root)
@@ -109,6 +109,22 @@ class WorkflowCommandTests(unittest.TestCase):
         self.assertIn("--pages", command)
         self.assertNotIn("--max-pages", command)
         self.assertNotIn("--stable-threshold", command)
+
+    def test_pdf_html_review_is_third_tab_and_uses_cache_by_default(self) -> None:
+        keys = list(WORKFLOW_BY_KEY)
+        self.assertEqual(keys[2], "pdf_html_review")
+        values = default_values("pdf_html_review")
+        command = build_command(WORKFLOW_BY_KEY["pdf_html_review"], values, Path("project"))
+        self.assertTrue(command[1].endswith("pdf_to_html.py"))
+        self.assertEqual(command[command.index("--input-root") + 1], "raw_data/bank")
+        self.assertEqual(
+            command[command.index("--output-dir") + 1],
+            "processed_data/pdf_html_review",
+        )
+        self.assertNotIn("--force", command)
+        values["force"] = True
+        command = build_command(WORKFLOW_BY_KEY["pdf_html_review"], values, Path("project"))
+        self.assertIn("--force", command)
 
     def test_command_preview_masks_device_serial(self) -> None:
         preview = format_command(["python", "capture.py", "--device", "ABCD12345678"])

@@ -88,6 +88,13 @@ class WorkflowPanel(ttk.Frame):
                 command=self.open_order_review_html,
             )
             self.order_review_button.grid(row=0, column=4, padx=(8, 0))
+        elif spec.key == "pdf_html_review":
+            self.pdf_review_button = ttk.Button(
+                button_row,
+                text="打开 PDF 表格审核 HTML",
+                command=self.open_pdf_table_review_html,
+            )
+            self.pdf_review_button.grid(row=0, column=4, padx=(8, 0))
 
     def _build_unresolved_area(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="未自动提取文件", padding=8)
@@ -159,6 +166,17 @@ class WorkflowPanel(ttk.Frame):
         path = self.app.project_root / "processed_data/normalized/orders_full_review.html"
         if not path.is_file():
             messagebox.showinfo("审核文件尚未生成", "请先执行订单归一化。", parent=self)
+            return
+        self.app.open_review_html(path)
+
+    def open_pdf_table_review_html(self) -> None:
+        value = str(self.variables["output_dir"].get()).strip()
+        output_dir = Path(value)
+        if not output_dir.is_absolute():
+            output_dir = self.app.project_root / output_dir
+        path = output_dir / "bank_pdf_tables_review.html"
+        if not path.is_file():
+            messagebox.showinfo("审核文件尚未生成", "请先执行 PDF 转 HTML 审核。", parent=self)
             return
         self.app.open_review_html(path)
 

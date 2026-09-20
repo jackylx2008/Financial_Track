@@ -131,6 +131,15 @@ def _email_normalize(values: Values) -> tuple[str, list[str]]:
     return "normalize_transactions.py", args
 
 
+def _pdf_html_review(values: Values) -> tuple[str, list[str]]:
+    args: list[str] = []
+    _add(args, "--config", values.get("config", "config.yaml"))
+    _add(args, "--input-root", values.get("input_root", "raw_data/bank"))
+    _add(args, "--output-dir", values.get("output_dir", "processed_data/pdf_html_review"))
+    _add(args, "--force", values.get("force", False))
+    return "pdf_to_html.py", args
+
+
 def _order_capture(values: Values) -> tuple[str, list[str]]:
     mode = str(values["mode"])
     args = [mode]
@@ -268,6 +277,33 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
             ),
         ),
         _email_normalize,
+        form_columns=2,
+    ),
+    WorkflowSpec(
+        "pdf_html_review",
+        "PDF 转 HTML 审核",
+        (
+            "识别银行流水 PDF 中的原始表格并生成独立 HTML 人工审核集；按 PDF 完整 SHA-256 缓存，"
+            "文件未变化时直接复用，不重复逐页扫描。"
+        ),
+        (
+            FieldSpec("input_root", "PDF 根目录", "directory", "raw_data/bank", required=True),
+            FieldSpec(
+                "output_dir",
+                "HTML 与缓存目录",
+                "directory",
+                "processed_data/pdf_html_review",
+                required=True,
+            ),
+            FieldSpec(
+                "force",
+                "强制重新识别已有缓存",
+                "bool",
+                False,
+                help_text="默认不勾选；只有 PDF 版式识别规则更新后才需要重跑",
+            ),
+        ),
+        _pdf_html_review,
         form_columns=2,
     ),
     WorkflowSpec(

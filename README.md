@@ -98,6 +98,19 @@ CLI 子进程运行，不阻塞 Tk 主线程；同一时间只允许一个任务
 第一步默认只执行确定性自动归一化；右侧列出未能自动提取交易的文件。“对未识别 PDF 使用本地 AI/OCR”
 默认不勾选，需要时再启用，届时才检查本地 AI 并把 PDF 页面渲染为图片进行 OCR。
 
+第三个页签“PDF 转 HTML 审核”专门预处理 `raw_data/bank` 中的银行流水 PDF。它按原 PDF 的页码、
+表格顺序、行列顺序和列宽比例生成一个可筛选的 HTML 审核集，并可从审核页调用本机默认程序打开原 PDF。
+每份 PDF 以完整 SHA-256 为键缓存；文件未变化时再次执行只复用缓存，不重复逐页提取。默认产物为：
+
+```text
+processed_data/pdf_html_review/bank_pdf_tables_review.html
+processed_data/pdf_html_review/pdf_html_manifest.json
+processed_data/pdf_html_review/cache/<PDF SHA-256>.json
+```
+
+也可从命令行执行 `python flows/pdf_to_html.py`；只有表格提取规则更新或需要重新诊断时才使用
+`--force`。HTML 是便于筛选和核对的结构化复刻，原 PDF 仍是版式及内容的最终依据。
+
 ## 环境准备
 
 建议使用 Python 3.11+。
