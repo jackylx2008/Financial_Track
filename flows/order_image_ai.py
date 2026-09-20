@@ -19,6 +19,7 @@
   --all         识别输入目录中的全部 PNG；未传入时只识别最新一张。
   --max-images  使用 `--all` 时限制处理图片数量。
   --max-tokens  每次视觉请求最大输出 token 数，默认 2048。
+  --force       已存在同名 JSON 时仍重新识别；默认断点续跑并跳过。
   --no-progress 禁用终端进度显示。
 
 示例：
@@ -74,6 +75,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--all", action="store_true", help="Parse all PNG images from the input directory.")
     parser.add_argument("--max-images", type=int, help="Limit images processed when using --all.")
     parser.add_argument("--max-tokens", type=int, default=2048, help="Max tokens for each vision request.")
+    parser.add_argument("--force", action="store_true", help="Reprocess images whose JSON output already exists.")
     parser.add_argument("--no-progress", action="store_true", help="Disable terminal progress display.")
     return parser.parse_args()
 
@@ -84,6 +86,8 @@ def main() -> int:
     platform = PLATFORM_OUTPUT_NAMES[args.platform]
     image_paths = resolve_image_paths(args, ctx.project_root)
     output_dir = resolve_output_dir(args, ctx.project_root, platform)
+    if not args.force:
+        image_paths = [path for path in image_paths if not (output_dir / f"{path.stem}.json").is_file()]
     logger.info(
         "Resolved order image AI job: platform=%s all=%s image_count=%s output_dir=%s",
         platform,

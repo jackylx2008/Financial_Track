@@ -31,6 +31,9 @@ def make_order(
     warnings: list[str] | None = None,
     notes: str = "",
     raw_record: Any | None = None,
+    source_type: str = "order_image_json",
+    source_records: list[dict[str, Any]] | None = None,
+    is_container: bool = False,
 ) -> dict[str, Any]:
     paid = decimal_to_string(parse_decimal(_clean_money(paid_amount)))
     original = decimal_to_string(parse_decimal(_clean_money(original_amount)))
@@ -39,7 +42,7 @@ def make_order(
         "record_type": "platform_order",
         "order_record_id": "",
         "platform": platform or "unknown",
-        "source_type": "order_image_json",
+        "source_type": source_type,
         "source_file": source_file,
         "source_image": source_image,
         "order_id": str(order_id or "").strip(),
@@ -56,12 +59,14 @@ def make_order(
         "logistics": str(logistics or "").strip(),
         "actions": [str(action).strip() for action in actions or [] if str(action).strip()],
         "is_partial": bool(is_partial),
+        "is_container": bool(is_container),
         "confidence": _safe_confidence(confidence),
         "warnings": sorted(set(warnings or [])),
         "notes": str(notes or "").strip(),
-        "source_records": [
+        "source_records": source_records
+        or [
             {
-                "source_type": "order_image_json",
+                "source_type": source_type,
                 "source_file": source_file,
                 "source_image": source_image,
                 "order_index": order_index,

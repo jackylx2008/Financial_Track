@@ -43,6 +43,7 @@ def read_order_json_records(json_root: Path, platforms: list[str]) -> tuple[list
 
             source_platform = str(payload.get("platform") or platform).strip() or platform
             source_image = str(payload.get("source_image") or "").strip()
+            source_image_path = _resolve_source_image(json_root, source_platform, source_image)
             source_warnings = [str(item) for item in payload.get("warnings", []) if str(item).strip()]
             platform_stats["source_warnings"] += len(source_warnings)
             raw_orders = payload.get("orders", [])
@@ -65,7 +66,7 @@ def read_order_json_records(json_root: Path, platforms: list[str]) -> tuple[list
                     make_order(
                         platform=source_platform,
                         source_file=str(json_file),
-                        source_image=source_image,
+                        source_image=str(source_image_path) if source_image_path else source_image,
                         order_index=index,
                         merchant=raw_order.get("merchant", ""),
                         status=raw_order.get("status", ""),
@@ -84,7 +85,29 @@ def read_order_json_records(json_root: Path, platforms: list[str]) -> tuple[list
                         warnings=source_warnings,
                         notes=raw_order.get("notes", ""),
                         raw_record=raw_order,
+                        source_records=[
+                            {
+                                "source_type": "order_image_json",
+                                "source_file": str(json_file),
+                                "source_image": str(source_image_path) if source_image_path else source_image,
+                                "order_index": index,
+                            }
+                        ],
                     )
                 )
         stats["platforms"][platform] = platform_stats
     return orders, stats
+
+
+def _resolve_source_image(json_root: Path, platform: str, value: str) -> Path | None:
+    if not value:
+        return None
+    path = Path(value)
+    if path.is_absolute() and path.is_file():
+        return path
+    candidates = (
+        json_root.parent / platform / path.name,
+        json_root / platform / path,
+        json_root / platform / path.name,
+    )
+    return next((candidate for candidate in candidates if candidate.is_file()), None)

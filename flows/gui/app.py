@@ -81,6 +81,13 @@ class WorkflowPanel(ttk.Frame):
         self.start_button.grid(row=0, column=2, padx=(0, 8))
         self.cancel_button = ttk.Button(button_row, text="取消任务", command=self.app.cancel_task, state="disabled")
         self.cancel_button.grid(row=0, column=3)
+        if spec.key == "normalize":
+            self.order_review_button = ttk.Button(
+                button_row,
+                text="打开购物审核 HTML",
+                command=self.open_order_review_html,
+            )
+            self.order_review_button.grid(row=0, column=4, padx=(8, 0))
 
     def _build_unresolved_area(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="未自动提取文件", padding=8)
@@ -145,6 +152,13 @@ class WorkflowPanel(ttk.Frame):
         path = self.app.project_root / "processed_data/normalized/bank_transactions_full_review.html"
         if not path.is_file():
             messagebox.showinfo("审核文件尚未生成", "请先执行自动归一化。", parent=self)
+            return
+        self.app.open_review_html(path)
+
+    def open_order_review_html(self) -> None:
+        path = self.app.project_root / "processed_data/normalized/orders_full_review.html"
+        if not path.is_file():
+            messagebox.showinfo("审核文件尚未生成", "请先执行订单归一化。", parent=self)
             return
         self.app.open_review_html(path)
 

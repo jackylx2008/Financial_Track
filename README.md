@@ -502,11 +502,24 @@ python flows/normalize_transactions.py
 ```text
 processed_data/normalized/bank_transactions.jsonl
 processed_data/normalized/orders.jsonl
+processed_data/normalized/orders.json
+processed_data/normalized/orders_full_review.html
+processed_data/normalized/orders_history.jsonl
 processed_data/normalized/financial_transactions.jsonl
 processed_data/normalized/financial_transactions_history.jsonl
 processed_data/normalized/financial_transaction_links.jsonl
 processed_data/normalized/normalized_quality_report.md
 ```
+
+订单归一化会自动发现 `raw_data/pdd/*.png`、`raw_data/meituan/*.png` 和
+`raw_data/jd/*.pdf`。拼多多和美团截图优先复用 `raw_data/order_json/<platform>/` 中的
+已识别 JSON，仅对尚无同名 JSON 的截图调用本地视觉模型，因此支持断点续跑。
+京东 PDF 优先使用自带文本层解析，只对字体编码异常的页面按需 OCR。
+三个平台目录中的 CSV、XLS 或 XLSX 订单表也会根据中文列名自动映射，并保留工作表与行号定位。
+归一化订单保存平台、下单时间、实付金额、商户、商品全名、规格、数量、状态、
+订单号、原始 PDF 页码或截图定位。记录指纹、版本关系与原始文件 SHA-256 和银行流水采用同一追溯规则。
+`orders_full_review.html` 支持平台、日期、金额区间、商户、商品和状态筛选，
+在 GUI“交易归一”页可直接打开，并可调用本机默认程序打开原始 PDF 或截图。
 
 其中 `financial_transactions` 是财务事实中间层，包含银行/支付流水事实和订单事实；`financial_transaction_links` 保存订单与付款流水的强关联或候选关联。最终账本以银行/支付流水为主来源，订单只用于补充购物、外卖、平台服务等明细，避免同一笔消费重复统计。
 

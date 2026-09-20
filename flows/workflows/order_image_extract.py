@@ -33,6 +33,9 @@ def run(
         output_dir,
         max_tokens,
     )
+    if not image_paths:
+        logger.info("No unprocessed order images remain: platform=%s", platform)
+        return []
     _health, models = client.ensure_server()
     client.assert_model_available(models)
 
@@ -42,10 +45,19 @@ def run(
         logger.info("Extracting image %s/%s: %s", index, total, image_path)
         try:
             result = extract_one_image(client, platform, image_path, output_dir, max_tokens)
-        except Exception:
+        except Exception as exc:
             _notify_progress(progress_callback, index, total, image_path, "error")
             logger.exception("Failed extracting image %s/%s: %s", index, total, image_path)
-            raise
+            results.append(
+                {
+                    "image": str(image_path),
+                    "output": "",
+                    "orders_count": 0,
+                    "warnings": [f"extract_error: {type(exc).__name__}: {exc}"],
+                    "error": True,
+                }
+            )
+            continue
         results.append(result)
         _notify_progress(progress_callback, index, total, image_path, "done")
         logger.info(

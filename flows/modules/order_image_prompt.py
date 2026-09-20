@@ -32,6 +32,7 @@ def build_order_image_prompt(platform: str, source_image: str) -> str:
         "pdd": "拼多多",
         "pinduoduo": "拼多多",
         "meituan": "美团",
+        "jd": "京东",
     }.get(platform, platform)
 
     return f"""

@@ -74,14 +74,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--order-platform",
         action="append",
-        choices=["pdd", "meituan"],
+        choices=["pdd", "meituan", "jd"],
         default=None,
-        help="Order platform to normalize. Can be repeated. Defaults to pdd and meituan.",
+        help="Order platform to normalize. Can be repeated. Defaults to pdd, meituan and jd.",
     )
     parser.add_argument(
         "--standalone-bank-root",
         default="raw_data",
         help="Directory containing known standalone bank statement files.",
+    )
+    parser.add_argument(
+        "--raw-order-root",
+        default="raw_data",
+        help="Root directory containing JD PDFs and platform order screenshots.",
     )
     parser.add_argument(
         "--no-document-ai",
@@ -108,7 +113,8 @@ def main() -> int:
         attachment_manifest_path=args.attachment_manifest,
         standalone_bank_root=args.standalone_bank_root,
         order_json_root=args.order_json_root,
-        order_platforms=args.order_platform or ["pdd", "meituan"],
+        order_platforms=args.order_platform or ["pdd", "meituan", "jd"],
+        raw_order_root=args.raw_order_root,
     )
     print_json(summary)
     return 0

@@ -38,7 +38,9 @@ def run(
     orders = _read_jsonl(order_path)
 
     bank_facts = [bank_transaction_to_fact(item) for item in bank_transactions]
-    order_facts = [order_to_fact(item) for item in orders]
+    # 京东“已拆分”父订单只作审核容器；子订单已包含实际商品和金额，
+    # 不再把父订单写成第二笔消费事实。
+    order_facts = [order_to_fact(item) for item in orders if not item.get("is_container")]
     links, link_stats = link_orders_to_payments(order_facts, bank_facts)
     _apply_link_status(order_facts, bank_facts, links)
 

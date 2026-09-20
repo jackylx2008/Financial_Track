@@ -159,6 +159,7 @@ def _order_ai(values: Values) -> tuple[str, list[str]]:
     _add(args, "--all", values["all_images"])
     _add(args, "--max-images", values["max_images"])
     _add(args, "--max-tokens", values["max_tokens"])
+    _add(args, "--force", values["force"])
     _add(args, "--no-progress", True)
     return "order_image_ai.py", args
 
@@ -307,13 +308,14 @@ WORKFLOWS: tuple[WorkflowSpec, ...] = (
             FieldSpec("all_images", "处理目录内全部 PNG", "bool", True),
             FieldSpec("max_images", "最大图片数", "int", "", minimum=1),
             FieldSpec("max_tokens", "单次最大 Token", "int", "2048", minimum=1),
+            FieldSpec("force", "重新识别已缓存截图", "bool", False),
         ),
         _order_ai,
     ),
     WorkflowSpec(
         "normalize",
         "交易归一",
-        "汇总交易流水与订单 JSON；目标以安卓截图为主来源，邮件/PDF 仅用于校验。",
+        "汇总银行/支付流水与拼多多、美团、京东订单；未识别截图和异常 PDF 仅在需要时调用本地 AI。",
         (
             FieldSpec("config", "配置文件", "file", "config.yaml", required=True),
             FieldSpec("source", "数据来源", "choice", "all", ("all", "bank", "orders")),

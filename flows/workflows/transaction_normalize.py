@@ -23,6 +23,7 @@ def run(
     standalone_bank_root: str | Path,
     order_json_root: str | Path,
     order_platforms: list[str],
+    raw_order_root: str | Path = "raw_data",
 ) -> dict[str, Any]:
     output_path = ctx.resolve_path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
@@ -46,6 +47,7 @@ def run(
             order_json_root=order_json_root,
             platforms=order_platforms,
             output_dir=output_path,
+            raw_order_root=raw_order_root,
         )
     summary["results"]["financial_transactions"] = run_financial_normalize(
         ctx=ctx,
