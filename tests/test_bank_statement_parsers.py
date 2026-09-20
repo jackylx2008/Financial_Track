@@ -14,7 +14,9 @@ from flows.modules.bank_transaction_filter import filter_transactions
 from flows.modules.bank_transaction_full_review_html import write_full_review_html
 from flows.modules.financial_attachment_reader import (
     _parse_icbc_pdf_line,
+    _read_alipay_legacy_csv_rows,
     _read_generic_bank_rows,
+    _read_wechat_rows,
     read_attachment_transactions,
 )
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
@@ -134,6 +136,117 @@ CN
 
 
 class AttachmentParserTests(unittest.TestCase):
+    def test_parses_legacy_alipay_purchase_and_refund_but_skips_neutral_transfer(self) -> None:
+        rows = _read_alipay_legacy_csv_rows(
+            Path("alipay.csv"),
+            [
+                {
+                    "交易号": "pay-1",
+                    "交易创建时间": "2026-01-02 10:00:00",
+                    "付款时间": "2026-01-02 10:01:00",
+                    "交易来源地": "淘宝",
+                    "交易对方": "示例店铺",
+                    "商品名称": "示例商品全名",
+                    "金额（元）": "88.50",
+                    "收/支": "支出",
+                    "交易状态": "交易成功",
+                },
+                {
+                    "交易号": "refund-1",
+                    "交易创建时间": "2026-01-03 11:00:00",
+                    "最近修改时间": "2026-01-05 12:00:00",
+                    "交易来源地": "淘宝",
+                    "交易对方": "示例店铺",
+                    "商品名称": "示例商品退款",
+                    "金额（元）": "88.50",
+                    "成功退款（元）": "20.00",
+                    "收/支": "不计收支",
+                    "交易状态": "退款成功",
+                },
+                {
+                    "交易号": "transfer-1",
+                    "交易创建时间": "2026-01-04 12:00:00",
+                    "交易对方": "示例银行",
+                    "商品名称": "余额转入",
+                    "金额（元）": "100.00",
+                    "收/支": "不计收支",
+                    "交易状态": "交易成功",
+                },
+            ],
+            "standalone_alipay_csv",
+            "交易号,交易创建时间\npay-1,2026-01-02 10:00:00",
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["bank_key"], "alipay")
+        self.assertEqual(rows[0]["direction"], "outflow")
+        self.assertEqual(rows[0]["platform"], "taobao")
+        self.assertEqual(rows[0]["summary"], "示例商品全名 / 交易成功")
+        self.assertEqual(rows[1]["direction"], "inflow")
+        self.assertEqual(rows[1]["amount"], "20.00")
+        self.assertEqual(rows[1]["transaction_time"], "2026-01-05 12:00:00")
+        self.assertEqual(rows[1]["source_records"][0]["source_type"], "standalone_alipay_csv")
+
+    def test_alipay_full_refund_uses_order_amount_when_refund_column_is_zero(self) -> None:
+        rows = _read_alipay_legacy_csv_rows(
+            Path("alipay.csv"),
+            [
+                {
+                    "交易号": "refund-zero",
+                    "交易创建时间": "2016-12-01 09:00:00",
+                    "最近修改时间": "2016-12-02 10:00:00",
+                    "交易来源地": "淘宝",
+                    "交易对方": "示例商户",
+                    "商品名称": "全额退款商品",
+                    "金额（元）": "99.00",
+                    "成功退款（元）": "0.00",
+                    "收/支": "不计收支",
+                    "交易状态": "退款成功",
+                }
+            ],
+            "standalone_alipay_csv",
+            "交易号,交易创建时间\nrefund-zero,2016-12-01 09:00:00",
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["direction"], "inflow")
+        self.assertEqual(rows[0]["amount"], "99.00")
+        self.assertEqual(rows[0]["transaction_time"], "2016-12-02 10:00:00")
+
+    def test_parses_wechat_payment_and_preserves_payment_card_tail(self) -> None:
+        rows = _read_wechat_rows(
+            Path("wechat.xlsx"),
+            [
+                {
+                    "交易时间": "2026-02-03 09:10:11",
+                    "交易对方": "示例商户",
+                    "商品": "示例商品",
+                    "收/支": "支出",
+                    "金额(元)": "36.80",
+                    "支付方式": "示例银行储蓄卡(1234)",
+                    "当前状态": "支付成功",
+                    "交易单号": "wechat-1",
+                },
+                {
+                    "交易时间": "2026-02-04 09:10:11",
+                    "交易对方": "零钱",
+                    "商品": "零钱充值",
+                    "收/支": "/",
+                    "金额(元)": "100.00",
+                },
+            ],
+            "standalone_wechat_xlsx",
+            "Sheet1",
+            19,
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bank_key"], "wechat")
+        self.assertEqual(rows[0]["account_tail"], "1234")
+        self.assertEqual(rows[0]["merchant"], "示例商户")
+        self.assertEqual(rows[0]["summary"], "示例商品 / 支付成功")
+        self.assertEqual(rows[0]["source_records"][0]["row"], 19)
+
     def test_parses_ceb_debit_and_credit_columns_with_masked_counterparty_account(self) -> None:
         rows = _read_generic_bank_rows(
             Path("中国光大银行账户明细查询清单.xls"),

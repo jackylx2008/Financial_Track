@@ -69,6 +69,8 @@ def _card_type(transaction: dict[str, Any]) -> str:
         return explicit
     if str(transaction.get("bank_key")) in {"bocom", "ccb", "ceb"}:
         return "借记卡"
+    if str(transaction.get("bank_key")) in {"alipay", "wechat"}:
+        return "支付账户"
     searchable = json.dumps(
         {
             "account": transaction.get("account_full_name", ""),

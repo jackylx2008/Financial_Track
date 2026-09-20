@@ -27,7 +27,7 @@ STANDALONE_BANK_FILES = {
 def read_standalone_bank_transactions(
     root: Path,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """读取 raw_data 根目录中人工放入的已知银行流水文件。"""
+    """读取 raw_data 中人工放入的已知银行及支付平台流水文件。"""
     transactions: list[dict[str, Any]] = []
     failures: list[str] = []
     unresolved_files: list[dict[str, str]] = []
@@ -46,6 +46,23 @@ def read_standalone_bank_transactions(
         except Exception as exc:
             failures.append(f"{path}: {type(exc).__name__}: {exc}")
             unresolved_files.append(_unresolved_file(path, item, f"自动解析失败：{type(exc).__name__}"))
+    payment_sources = (
+        (root / "taobao" / "csv", "*.csv", "alipay", "支付宝", _read_csv_transactions),
+        (root / "weixin" / "csv", "*.xlsx", "wechat", "微信支付", _read_xlsx_transactions),
+    )
+    for directory, pattern, bank_key, bank_name, reader in payment_sources:
+        for path in sorted(directory.glob(pattern)):
+            files_seen += 1
+            item = {"bank_key": bank_key, "bank_name": bank_name, "status": "success"}
+            source_type = f"standalone_{bank_key}_{path.suffix.lower().lstrip('.')}"
+            try:
+                parsed = reader(path, item, source_type)
+                transactions.extend(parsed)
+                if not parsed:
+                    unresolved_files.append(_unresolved_file(path, item))
+            except Exception as exc:
+                failures.append(f"{path}: {type(exc).__name__}: {exc}")
+                unresolved_files.append(_unresolved_file(path, item, f"自动解析失败：{type(exc).__name__}"))
     for transaction in transactions:
         _apply_known_card_metadata(transaction)
     return transactions, {
@@ -168,21 +185,30 @@ def _read_pdf_transactions(path: Path, manifest_item: dict[str, Any]) -> list[di
     return transactions
 
 
-def _read_csv_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
+def _read_csv_transactions(
+    path: Path,
+    manifest_item: dict[str, Any],
+    source_type: str = "email_attachment_csv",
+) -> list[dict[str, Any]]:
     text = _read_csv_text(path)
     rows = _read_dict_rows_from_text(text)
     if not rows:
         return []
     headers = set(rows[0])
     if {"交易时间", "交易分类", "交易对方", "收/支", "金额"}.issubset(headers):
-        return _read_alipay_csv_rows(path, manifest_item, rows)
+        return _read_alipay_csv_rows(path, manifest_item, rows, source_type)
+    if {"交易号", "交易创建时间", "交易对方", "金额（元）", "收/支"}.issubset(headers):
+        return _read_alipay_legacy_csv_rows(path, rows, source_type, text)
     if {"交易创建时间", "交易成功时间", "订单标题", "收/支", "实付金额"}.issubset(headers):
         return _read_meituan_csv_rows(path, manifest_item, rows)
-    return _read_generic_bank_rows(path, manifest_item, rows, "email_attachment_csv")
+    return _read_generic_bank_rows(path, manifest_item, rows, source_type)
 
 
 def _read_alipay_csv_rows(
-    path: Path, manifest_item: dict[str, Any], rows: list[dict[str, str]]
+    path: Path,
+    manifest_item: dict[str, Any],
+    rows: list[dict[str, str]],
+    source_type: str = "email_attachment_csv",
 ) -> list[dict[str, Any]]:
     transactions: list[dict[str, Any]] = []
     for row_index, row in enumerate(rows, start=1):
@@ -206,7 +232,7 @@ def _read_alipay_csv_rows(
                 transaction_reference=row.get("交易订单号", "").strip(),
                 source_records=[
                     {
-                        "source_type": "email_attachment_csv",
+                        "source_type": source_type,
                         "source_file": str(path),
                         "message_uid": manifest_item.get("message_uid", ""),
                         "message_id": manifest_item.get("message_id", ""),
@@ -408,6 +434,8 @@ def _apply_known_card_metadata(transaction: dict[str, Any]) -> None:
     bank_key = str(transaction.get("bank_key", ""))
     if bank_key in {"bocom", "ccb", "ceb"}:
         transaction["card_type"] = "借记卡"
+    elif bank_key in {"alipay", "wechat"}:
+        transaction["card_type"] = "支付账户"
     elif bank_key == "cmb":
         transaction["card_type"] = "信用卡"
     elif bank_key == "icbc" and not transaction.get("card_type"):
@@ -453,7 +481,68 @@ def _read_xls_transactions(
     return transactions
 
 
-def _read_xlsx_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
+def _read_alipay_legacy_csv_rows(
+    path: Path,
+    rows: list[dict[str, str]],
+    source_type: str,
+    text: str,
+) -> list[dict[str, Any]]:
+    transactions: list[dict[str, Any]] = []
+    first_data_row = _csv_first_data_row(text, "交易号")
+    for offset, row in enumerate(rows):
+        direction_text = str(row.get("收/支", "")).strip()
+        status = str(row.get("交易状态", "")).strip()
+        if direction_text == "支出":
+            direction = "outflow"
+        elif direction_text == "收入" or (direction_text == "不计收支" and "退款成功" in status):
+            direction = "inflow"
+        else:
+            continue
+        is_refund = direction_text == "不计收支" and "退款成功" in status
+        amount = _clean_money(row.get("成功退款（元）", "")) if is_refund else ""
+        # 早期支付宝导出会将已成功的全额退款写成“成功退款=0.00”，
+        # 此时仍需用原订单金额表示实际退回的资金。
+        if not parse_money_token(amount) or amount in {"0", "0.0", "0.00"}:
+            amount = _clean_money(row.get("金额（元）", ""))
+        if not parse_money_token(amount) or amount in {"0", "0.0", "0.00"}:
+            continue
+        merchant = str(row.get("交易对方", "")).strip()
+        title = str(row.get("商品名称", "")).strip()
+        transaction = make_transaction(
+            bank_key="alipay",
+            bank_name="支付宝",
+            transaction_time=(
+                str(row.get("最近修改时间", "")).strip()
+                if is_refund
+                else str(row.get("付款时间", "")).strip() or str(row.get("交易创建时间", "")).strip()
+            ),
+            direction=direction,
+            amount=amount,
+            merchant=merchant,
+            counterparty=merchant,
+            summary=_join_summary(title, status),
+            channel=str(row.get("交易来源地", "")).strip() or "支付宝",
+            transaction_reference=str(row.get("交易号", "")).strip(),
+            source_records=[
+                {
+                    "source_type": source_type,
+                    "source_file": str(path),
+                    "row": first_data_row + offset,
+                }
+            ],
+            confidence=0.96,
+            raw_record=row,
+        )
+        transaction["platform"] = "taobao" if str(row.get("交易来源地", "")).strip() == "淘宝" else ""
+        transactions.append(transaction)
+    return transactions
+
+
+def _read_xlsx_transactions(
+    path: Path,
+    manifest_item: dict[str, Any],
+    source_type: str = "email_attachment_xlsx",
+) -> list[dict[str, Any]]:
     from openpyxl import load_workbook
 
     book = load_workbook(path, read_only=True, data_only=True)
@@ -469,18 +558,76 @@ def _read_xlsx_transactions(path: Path, manifest_item: dict[str, Any]) -> list[d
                 {headers[index]: str(value or "").strip() for index, value in enumerate(row) if index < len(headers)}
                 for row in values[header_row + 1 :]
             ]
+            if {"交易时间", "交易类型", "交易对方", "商品", "收/支", "金额(元)"}.issubset(set(headers)):
+                transactions.extend(
+                    _read_wechat_rows(
+                        path,
+                        rows,
+                        source_type,
+                        sheet.title,
+                        header_row + 2,
+                    )
+                )
+                continue
             transactions.extend(
                 _read_generic_bank_rows(
                     path,
                     manifest_item,
                     rows,
-                    "email_attachment_xlsx",
+                    source_type,
                     sheet_name=sheet.title,
                     first_data_row=header_row + 2,
                 )
             )
     finally:
         book.close()
+    return transactions
+
+
+def _read_wechat_rows(
+    path: Path,
+    rows: list[dict[str, str]],
+    source_type: str,
+    sheet_name: str,
+    first_data_row: int,
+) -> list[dict[str, Any]]:
+    transactions: list[dict[str, Any]] = []
+    for offset, row in enumerate(rows):
+        direction = _direction_from_cn(row.get("收/支", ""))
+        if direction == "unknown":
+            continue
+        amount = _clean_money(row.get("金额(元)", ""))
+        if not parse_money_token(amount) or amount in {"0", "0.0", "0.00"}:
+            continue
+        merchant = str(row.get("交易对方", "")).strip()
+        title = str(row.get("商品", "")).strip()
+        payment_method = str(row.get("支付方式", "")).strip()
+        transactions.append(
+            make_transaction(
+                bank_key="wechat",
+                bank_name="微信支付",
+                account_full_name=payment_method if payment_method != "/" else "微信支付",
+                account_tail=_account_tail_from_text(payment_method),
+                transaction_time=str(row.get("交易时间", "")).strip(),
+                direction=direction,
+                amount=amount,
+                merchant=merchant,
+                counterparty=merchant,
+                summary=_join_summary(title, str(row.get("当前状态", "")).strip()),
+                channel=payment_method if payment_method != "/" else "微信支付",
+                transaction_reference=str(row.get("交易单号", "")).strip(),
+                source_records=[
+                    {
+                        "source_type": source_type,
+                        "source_file": str(path),
+                        "sheet": sheet_name,
+                        "row": first_data_row + offset,
+                    }
+                ],
+                confidence=0.96,
+                raw_record=row,
+            )
+        )
     return transactions
 
 
@@ -668,7 +815,17 @@ def _find_header_row(sheet: Any) -> int | None:
 
 def _find_sequence_header_row(rows: list[tuple[Any, ...]]) -> int | None:
     date_aliases = {"交易时间", "交易日期", "交易日", "发生时间", "记账时间"}
-    amount_aliases = {"交易金额", "金额", "发生额", "支出金额", "收入金额", "借方发生额", "贷方发生额"}
+    amount_aliases = {
+        "交易金额",
+        "金额",
+        "金额(元)",
+        "金额（元）",
+        "发生额",
+        "支出金额",
+        "收入金额",
+        "借方发生额",
+        "贷方发生额",
+    }
     for row_index, row in enumerate(rows[:30]):
         values = {str(value or "").strip() for value in row}
         if values & date_aliases and values & amount_aliases:
@@ -729,7 +886,22 @@ def _bank_name(bank_key: str) -> str:
         "ccb": "建设银行",
         "bocom": "交通银行",
         "ceb": "光大银行",
+        "alipay": "支付宝",
+        "wechat": "微信支付",
     }.get(bank_key, "")
+
+
+def _csv_first_data_row(text: str, first_header: str) -> int:
+    lines = text.splitlines()
+    header_index = next(
+        (index for index, line in enumerate(lines) if line.split(",", 1)[0].strip() == first_header),
+        0,
+    )
+    return header_index + 2
+
+
+def _join_summary(*values: str) -> str:
+    return " / ".join(value for value in (str(item or "").strip() for item in values) if value and value != "/")
 
 
 def _account_full_from_xls(sheet: Any) -> str:

@@ -108,6 +108,9 @@ def run(
         "deduped_transactions": len(deduped_transactions),
         "email_transactions": len(email_transactions),
         "attachment_transactions": len(attachment_transactions),
+        "standalone_financial_transactions": len(standalone_transactions),
+        "standalone_source_files": standalone_stats["files_seen"],
+        # 保留旧汇总字段，避免现有自动化读取失败。
         "standalone_bank_transactions": len(standalone_transactions),
         "standalone_bank_files": standalone_stats["files_seen"],
         "filtered_transactions": len(filtered_transactions),

@@ -467,6 +467,9 @@ processed_data/normalized/email_normalization_unresolved.json
 文字误判卡片类型。
 放在 `raw_data/` 根目录的 `中国光大银行账户明细查询清单.xls` 会在银行归一化时自动读取为光大银行借记卡流水；
 支出金额和存入金额分别映射为支出和收入，对方账号（包括星号）、对方户名、摘要、余额、工作表及行号均予以保留。
+`raw_data/taobao/csv/` 下的支付宝 CSV 和 `raw_data/weixin/csv/` 下的微信支付 XLSX 也会自动读取，
+标记为支付账户流水。保存交易时间、方向、金额、交易对方、商品全名、支付方式、状态和订单号；支付宝退款
+按收入处理，平台标为“不计收支”的普通内部划转以及微信中性交易不进入归一化流水。
 首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
 未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由
