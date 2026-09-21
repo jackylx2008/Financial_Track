@@ -16,6 +16,7 @@ from flows.modules.pdf_ocr_review_data import (
     review_key,
     save_manual_review,
 )
+from flows.modules.pdf_ocr_crop_cache import crop_page_rect, load_or_detect_pdf_crop
 
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ class PdfOcrReviewApp:
         self.output_dir = self.project_root / "processed_data" / "pdf_html_review"
         self.manifest_path = self.output_dir / "pdf_html_manifest.json"
         self.review_path = self.output_dir / "pdf_ocr_manual_review.json"
+        self.crop_cache_path = self.project_root / "pdf_ocr_crop_positions.local.json"
         self.documents = load_review_documents(self.manifest_path)
         if not self.documents:
             raise RuntimeError("没有可审核的 PDF 缓存，请先在主 GUI 执行“PDF 转 HTML 审核”。")
@@ -53,6 +55,8 @@ class PdfOcrReviewApp:
         self.pdf_document: Any | None = None
         self.page_index = 0
         self.pdf_photo: Any | None = None
+        self.crop: dict[str, Any] = {"left_ratio": 0.0, "right_ratio": 1.0, "method": "pending"}
+        self.crop_was_cached = False
         self._syncing_scroll = False
 
         self.root.title("PDF 原页与识别数据人工审核")
@@ -80,7 +84,7 @@ class PdfOcrReviewApp:
         ttk.Label(shell, text="PDF 原页与识别数据人工审核", style="Title.TLabel").pack(anchor="w")
         ttk.Label(
             shell,
-            text="只读取 PDF 哈希缓存和识别结果；人工结论独立保存，不进入归一化或财务统计。",
+            text="不重新提取交易；仅首次 OCR 识别左右边框。人工结论独立保存，不进入归一化或财务统计。",
             style="Hint.TLabel",
         ).pack(anchor="w", pady=(2, 8))
 
@@ -206,6 +210,11 @@ class PdfOcrReviewApp:
         self.pdf_document = fitz.open(document["source_file"])
         if len(self.pages) != self.pdf_document.page_count:
             raise ValueError("PDF 页数与识别缓存页数不一致，不能进行逐页审核。")
+        self.crop, self.crop_was_cached = load_or_detect_pdf_crop(
+            self.pdf_document,
+            str(document.get("sha256", "")),
+            self.crop_cache_path,
+        )
         self.page_box.configure(values=[str(index) for index in range(1, len(self.pages) + 1)])
         self.page_index = 0
         self.page_box.current(0)
@@ -232,7 +241,8 @@ class PdfOcrReviewApp:
 
         page = self.pdf_document.load_page(self.page_index)
         scale = self.zoom_var.get() / 100.0
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), alpha=False)
+        clip = crop_page_rect(page, self.crop)
+        pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=clip, alpha=False)
         image = Image.frombytes("RGB", (pixmap.width, pixmap.height), pixmap.samples)
         self.pdf_photo = ImageTk.PhotoImage(image)
         width, height = pixmap.width, pixmap.height
@@ -240,14 +250,21 @@ class PdfOcrReviewApp:
         self.left_canvas.delete("all")
         self.left_canvas.create_image(12, 12, anchor="nw", image=self.pdf_photo)
         self.left_canvas.configure(scrollregion=(0, 0, width + 24, height + 24))
-        self._draw_recognized_page(self.pages[self.page_index], width, height, scale)
+        self._draw_recognized_page(self.pages[self.page_index], width, height, scale, clip.x0)
         self.left_canvas.yview_moveto(0)
         self.right_canvas.yview_moveto(0)
         self.vertical_scrollbar.set(0, min(1.0, self.left_canvas.winfo_height() / max(1, height + 24)))
         self._load_review_state()
         self._update_status()
 
-    def _draw_recognized_page(self, page: dict[str, Any], width: int, height: int, scale: float) -> None:
+    def _draw_recognized_page(
+        self,
+        page: dict[str, Any],
+        width: int,
+        height: int,
+        scale: float,
+        crop_left: float,
+    ) -> None:
         canvas = self.right_canvas
         canvas.delete("all")
         horizontal_scale = scale * 1.65
@@ -263,7 +280,7 @@ class PdfOcrReviewApp:
                 width=recognized_width - 32,
             )
         for table in tables:
-            self._draw_table(canvas, table, horizontal_scale, scale, page)
+            self._draw_table(canvas, table, horizontal_scale, scale, crop_left, page)
         canvas.configure(scrollregion=(0, 0, recognized_width + 24, height + 24))
 
     def _draw_table(
@@ -272,11 +289,12 @@ class PdfOcrReviewApp:
         table: dict[str, Any],
         horizontal_scale: float,
         vertical_scale: float,
+        crop_left: float,
         page: dict[str, Any],
     ) -> None:
         bbox = table.get("bbox", [0, 0, page.get("width", 1), page.get("height", 1)])
-        x0 = float(bbox[0]) * horizontal_scale + 12
-        x1 = float(bbox[2]) * horizontal_scale + 12
+        x0 = (float(bbox[0]) - crop_left) * horizontal_scale + 12
+        x1 = (float(bbox[2]) - crop_left) * horizontal_scale + 12
         y0 = float(bbox[1]) * vertical_scale + 12
         y1 = float(bbox[3]) * vertical_scale + 12
         rows = table.get("rows", [])
@@ -349,10 +367,7 @@ class PdfOcrReviewApp:
         self.left_canvas.xview_moveto(left_horizontal)
         self.right_canvas.xview_moveto(right_horizontal)
         self.vertical_scrollbar.set(*self.left_canvas.yview())
-        self.status_var.set(
-            f"第 {self.page_index + 1}/{len(self.pages)} 页 · 缩放 {target}% · "
-            f"OCR {self.document.get('ocr_status', 'unknown')}"
-        )
+        self._update_status()
         return "break"
 
     def _select_page_number(self) -> None:
@@ -400,8 +415,13 @@ class PdfOcrReviewApp:
 
     def _update_status(self) -> None:
         digest = str(self.document.get("sha256", ""))
+        left = float(self.crop.get("left_ratio", 0.0)) * 100
+        right = float(self.crop.get("right_ratio", 1.0)) * 100
+        crop_source = "裁边缓存" if self.crop_was_cached else "首次 OCR 裁边"
         self.status_var.set(
-            f"第 {self.page_index + 1}/{len(self.pages)} 页 · OCR {self.document.get('ocr_status', 'unknown')} · SHA-256 {digest[:16]}…"
+            f"第 {self.page_index + 1}/{len(self.pages)} 页 · 缩放 {self.zoom_var.get()}% · "
+            f"{crop_source} {left:.1f}%-{right:.1f}% · "
+            f"OCR {self.document.get('ocr_status', 'unknown')} · SHA-256 {digest[:12]}…"
         )
 
     @staticmethod

@@ -232,6 +232,7 @@ __marimo__/
 log/
 logs/
 .pytest_tmp/
+pdf_ocr_crop_positions.local.json
 
 # Debug scripts
 debug_*.py
