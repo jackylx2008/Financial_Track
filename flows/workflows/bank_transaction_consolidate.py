@@ -18,6 +18,7 @@ from flows.modules.bank_transaction_quality_report import build_quality_report
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
 from flows.modules.transaction_traceability import (
     apply_record_traceability,
+    assign_flow_hashes,
     enrich_bank_source_provenance,
     write_history,
 )
@@ -55,6 +56,7 @@ def run(
     json_path = output_path / "bank_transactions.json"
     report_path = output_path / "bank_transactions_quality_report.md"
     full_review_html_path = output_path / "bank_transactions_full_review.html"
+    payment_review_html_path = output_path / "payment_transactions_full_review.html"
     unresolved_path = output_path / "email_normalization_unresolved.json"
     history_path = output_path / "bank_transactions_history.jsonl"
     previous_transactions = _read_jsonl(jsonl_path)
@@ -64,6 +66,7 @@ def run(
         email_records_file,
         attachment_manifest_file,
     )
+    flow_hash_stats = assign_flow_hashes(deduped_transactions, "transaction_id")
     trace_stats, superseded = apply_record_traceability(
         deduped_transactions,
         previous_transactions,
@@ -87,7 +90,19 @@ def run(
         ),
         encoding="utf-8",
     )
-    full_review_html = write_full_review_html(deduped_transactions, full_review_html_path)
+    payment_keys = {"alipay", "wechat"}
+    bank_review_records = [item for item in deduped_transactions if item.get("bank_key") not in payment_keys]
+    payment_review_records = [item for item in deduped_transactions if item.get("bank_key") in payment_keys]
+    full_review_html = write_full_review_html(
+        bank_review_records,
+        full_review_html_path,
+        title="银行交易完整人工审核集",
+    )
+    payment_review_html = write_full_review_html(
+        payment_review_records,
+        payment_review_html_path,
+        title="支付宝与微信支付完整人工审核集",
+    )
     unresolved_files = attachment_stats.get("unresolved_files", [])
     unresolved_path.write_text(
         json.dumps(
@@ -119,11 +134,15 @@ def run(
         "json": str(json_path),
         "quality_report": str(report_path),
         "full_review_html": full_review_html,
+        "bank_review_transactions": len(bank_review_records),
+        "payment_review_html": payment_review_html,
+        "payment_review_transactions": len(payment_review_records),
         "unresolved_files": len(unresolved_files),
         "unresolved_file_list": str(unresolved_path),
         "history": str(history_path),
         "history_records_added": history_added,
         "source_hashes": source_hash_stats,
+        "flow_hashes": flow_hash_stats,
         "traceability": trace_stats,
         "ai_fallback": ai_fallback.stats(),
     }

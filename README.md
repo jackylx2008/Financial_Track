@@ -478,6 +478,7 @@ processed_data/normalized/bank_transactions.jsonl
 processed_data/normalized/bank_transactions.json
 processed_data/normalized/bank_transactions_quality_report.md
 processed_data/normalized/bank_transactions_full_review.html
+processed_data/normalized/payment_transactions_full_review.html
 processed_data/normalized/bank_transactions_history.jsonl
 processed_data/normalized/email_normalization_unresolved.json
 ```
@@ -505,9 +506,10 @@ processed_data/normalized/email_normalization_unresolved.json
 按收入处理，平台标为“不计收支”的普通内部划转以及微信中性交易不进入归一化流水。
 首次实际调用前检查服务和模型，不执行 GUI 心跳。
 质量报告写入 `bank_transactions_quality_report.md`。
-未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示；完整交易审核结果可由
-页面上的“打开审核 HTML”按钮查看。
-完整人工审核集写入 `bank_transactions_full_review.html`，按“银行 + 卡片类型”展示机构，主表包含账户尾号、
+未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示。GUI 分别提供
+“打开银行审核 HTML”和“打开支付审核 HTML”：`bank_transactions_full_review.html` 只汇总各银行流水，
+`payment_transactions_full_review.html` 合并支付宝和微信支付流水，两类数据不再混排。
+银行完整人工审核集按“银行 + 卡片类型”展示机构，主表包含账户尾号、
 交易卡尾号、主/副卡、交易/入账日期、方向、精确金额、币种、统一后的商户/对方全名、对方账号、
 未脱敏摘要、渠道和来源定位。银行归一化记录不再保存“交易类型”；工行借记卡的序号、地区代码仅保留在
 `raw_record` 原始行中，不映射为归一化字段或渠道。对方账号按账单原文保存，包括中间四位为星号的账号。
@@ -516,8 +518,10 @@ PDF、Excel、CSV 或邮件文件可以点击并交给本机默认程序打开�
 且只允许访问项目 `raw_data/` 下的文件。
 完整审核集含个人财务信息，只能保存在被 Git 忽略的 `processed_data/` 中。
 
-每条归一化流水还保存完整追溯信息：来源记录中的原始 EML、原始加密附件、解密后解析文件等均记录
-64 位 SHA-256；`record_fingerprint_sha256` 是归一化记录的完整规范化指纹；`record_version`、
+每个原始数据源行、PDF 页/行、Excel/CSV 行或邮件候选均保存独立的 `source_record_sha256`；每条银行、
+支付宝、微信及购物订单流水均保存唯一的 64 位 `flow_hash_sha256`，对应类型还保存
+`transaction_hash_sha256` 或 `order_hash_sha256`。来源记录中的原始 EML、原始加密附件、解密后解析文件等均记录
+64 位文件 SHA-256；`record_fingerprint_sha256` 是归一化记录的完整规范化指纹；`record_version`、
 `supersedes_record_ids` 和 `supersedes_record_fingerprints_sha256` 连接修正前后的版本。被替代的旧版本
 追加保存在 `bank_transactions_history.jsonl` 或 `financial_transactions_history.jsonl`，原有 PDF 页码、
 Excel/CSV 行号、工作表和邮件 UID 定位字段继续保留。
@@ -541,6 +545,7 @@ processed_data/normalized/orders_history.jsonl
 processed_data/normalized/financial_transactions.jsonl
 processed_data/normalized/financial_transactions_history.jsonl
 processed_data/normalized/financial_transaction_links.jsonl
+processed_data/normalized/payment_chain_links.jsonl
 processed_data/normalized/normalized_quality_report.md
 ```
 
@@ -561,7 +566,11 @@ SHA-256；京东无文本层的 3 页按需调用本地 AI/OCR，其余 PDF 使�
 拼多多订单列表截图本身不显示订单日期，程序不会根据截图文件名推测日期，审核时应结合
 可点击的原始截图确认。
 
-其中 `financial_transactions` 是财务事实中间层，包含银行/支付流水事实和订单事实；`financial_transaction_links` 保存订单与付款流水的强关联或候选关联。最终账本以银行/支付流水为主来源，订单只用于补充购物、外卖、平台服务等明细，避免同一笔消费重复统计。
+其中 `financial_transactions` 是财务事实中间层，明确区分银行流水、支付宝/微信支付账户流水和订单事实；
+每条事实也保存唯一的 `flow_hash_sha256`。`financial_transaction_links` 保持订单到付款流水的兼容关联，
+`payment_chain_links` 进一步汇总“订单 → 支付账户/银行卡”和“支付宝/微信 → 银行卡”的带哈希关系。
+支付账户到银行卡只在金额完全相同、日期相近且银行渠道明确匹配时建立；多候选情况标记为 `candidate`，
+不自动认定唯一链路。最终账本仍以资金流水为主来源，订单只补充购物、外卖、平台服务等明细，避免重复统计。
 
 构建最终账本：
 

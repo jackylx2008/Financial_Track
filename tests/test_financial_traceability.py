@@ -7,10 +7,14 @@ from tempfile import TemporaryDirectory
 
 from flows.modules.bank_transaction_deduper import dedupe_transactions
 from flows.modules.bank_transaction_schema import make_transaction
-from flows.modules.financial_transaction_linker import link_orders_to_payments
+from flows.modules.financial_transaction_linker import (
+    link_orders_to_payments,
+    link_payment_accounts_to_banks,
+)
 from flows.modules.order_deduper import dedupe_orders
 from flows.modules.transaction_traceability import (
     apply_record_traceability,
+    assign_flow_hashes,
     enrich_bank_source_provenance,
     enrich_source_file_hashes,
     sha256_file,
@@ -18,6 +22,61 @@ from flows.modules.transaction_traceability import (
 
 
 class FinancialTraceabilityTests(unittest.TestCase):
+    def test_flow_hashes_are_full_and_source_specific(self) -> None:
+        records = [
+            make_transaction(
+                bank_key="demo",
+                transaction_time="2026-01-01",
+                direction="outflow",
+                amount="10.00",
+                source_records=[{"source_file": "first.csv", "row": 2}],
+            ),
+            make_transaction(
+                bank_key="demo",
+                transaction_time="2026-01-01",
+                direction="outflow",
+                amount="10.00",
+                source_records=[{"source_file": "second.csv", "row": 2}],
+            ),
+        ]
+
+        stats = assign_flow_hashes(records, "transaction_id")
+
+        self.assertEqual(stats["duplicate_flow_hashes"], 0)
+        self.assertEqual(len(records[0]["flow_hash_sha256"]), 64)
+        self.assertNotEqual(records[0]["flow_hash_sha256"], records[1]["flow_hash_sha256"])
+
+    def test_payment_account_to_bank_link_has_full_hash(self) -> None:
+        wallet = {
+            "financial_transaction_id": "fin_wallet",
+            "flow_hash_sha256": "a" * 64,
+            "direction": "outflow",
+            "amount": "18.88",
+            "business_type": "expense",
+            "payment_channel": "wechat_pay",
+            "occurrence_time": "2026-01-02 12:00:00",
+            "currency": "CNY",
+            "source_record_ids": {"payment_account_transaction_id": "wallet_tx"},
+        }
+        bank = {
+            "financial_transaction_id": "fin_bank",
+            "flow_hash_sha256": "b" * 64,
+            "direction": "outflow",
+            "amount": "18.88",
+            "business_type": "expense",
+            "payment_channel": "wechat_pay",
+            "occurrence_time": "2026-01-02 12:01:00",
+            "currency": "CNY",
+            "source_record_ids": {"bank_transaction_id": "bank_tx"},
+        }
+
+        links, stats = link_payment_accounts_to_banks([wallet], [bank])
+
+        self.assertEqual(stats["links"], 1)
+        self.assertEqual(links[0]["relation"], "funded_by")
+        self.assertEqual(links[0]["match_strength"], "linked")
+        self.assertEqual(len(links[0]["link_hash_sha256"]), 64)
+
     def test_bank_duplicates_merge_source_records(self) -> None:
         base = {
             "bank_key": "demo_bank",
@@ -374,6 +433,7 @@ class FinancialTraceabilityTests(unittest.TestCase):
             self.assertEqual(source["source_file_sha256"], sha256_file(parsed))
             self.assertEqual(source["original_attachment_file_sha256"], sha256_file(original))
             self.assertEqual(source["email_source_file_sha256"], sha256_file(email_file))
+            self.assertEqual(len(source["source_record_sha256"]), 64)
             self.assertEqual(source["page"], 2)
 
 

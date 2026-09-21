@@ -14,6 +14,7 @@ from flows.modules.order_review_html import write_order_review_html
 from flows.workflows.order_image_extract import run as run_order_image_extract
 from flows.modules.transaction_traceability import (
     apply_record_traceability,
+    assign_flow_hashes,
     enrich_source_file_hashes,
     write_history,
 )
@@ -72,6 +73,7 @@ def run(
     history_path = output_path / "orders_history.jsonl"
     previous_orders = _read_jsonl(jsonl_path)
     source_hash_stats = enrich_source_file_hashes(deduped_orders, ctx.project_root)
+    flow_hash_stats = assign_flow_hashes(deduped_orders, "order_record_id")
     trace_stats, superseded = apply_record_traceability(
         deduped_orders,
         previous_orders,
@@ -107,6 +109,7 @@ def run(
         "history": str(history_path),
         "history_records_added": history_added,
         "source_hashes": source_hash_stats,
+        "flow_hashes": flow_hash_stats,
         "traceability": trace_stats,
         "reader_stats": reader_stats,
         "dedupe_stats": dedupe_stats,

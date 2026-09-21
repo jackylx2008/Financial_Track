@@ -111,8 +111,11 @@ class WorkflowPanel(ttk.Frame):
         ttk.Button(toolbar, text="刷新列表", command=self.refresh_unresolved_files).grid(
             row=0, column=1, padx=(6, 0)
         )
-        ttk.Button(toolbar, text="打开审核 HTML", command=self.open_review_html).grid(
+        ttk.Button(toolbar, text="打开银行审核 HTML", command=self.open_review_html).grid(
             row=0, column=2, padx=(6, 0)
+        )
+        ttk.Button(toolbar, text="打开支付审核 HTML", command=self.open_payment_review_html).grid(
+            row=0, column=3, padx=(6, 0)
         )
 
         columns = ("institution", "type", "file", "reason")
@@ -157,6 +160,13 @@ class WorkflowPanel(ttk.Frame):
 
     def open_review_html(self) -> None:
         path = self.app.project_root / "processed_data/normalized/bank_transactions_full_review.html"
+        if not path.is_file():
+            messagebox.showinfo("审核文件尚未生成", "请先执行自动归一化。", parent=self)
+            return
+        self.app.open_review_html(path)
+
+    def open_payment_review_html(self) -> None:
+        path = self.app.project_root / "processed_data/normalized/payment_transactions_full_review.html"
         if not path.is_file():
             messagebox.showinfo("审核文件尚未生成", "请先执行自动归一化。", parent=self)
             return

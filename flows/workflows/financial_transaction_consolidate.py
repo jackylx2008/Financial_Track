@@ -6,7 +6,10 @@ from pathlib import Path
 from typing import Any
 
 from flows.context import AppContext
-from flows.modules.financial_transaction_linker import link_orders_to_payments
+from flows.modules.financial_transaction_linker import (
+    link_orders_to_payments,
+    link_payment_accounts_to_banks,
+)
 from flows.modules.financial_transaction_quality_report import build_financial_transaction_report
 from flows.modules.financial_transaction_schema import (
     bank_transaction_to_fact,
@@ -14,6 +17,7 @@ from flows.modules.financial_transaction_schema import (
 )
 from flows.modules.transaction_traceability import (
     apply_record_traceability,
+    assign_flow_hashes,
     enrich_source_file_hashes,
     write_history,
 )
@@ -41,7 +45,14 @@ def run(
     # 京东“已拆分”父订单只作审核容器；子订单已包含实际商品和金额，
     # 不再把父订单写成第二笔消费事实。
     order_facts = [order_to_fact(item) for item in orders if not item.get("is_container")]
+    flow_hash_stats = assign_flow_hashes(bank_facts + order_facts, "financial_transaction_id")
     links, link_stats = link_orders_to_payments(order_facts, bank_facts)
+    payment_account_facts = [item for item in bank_facts if item.get("source_type") == "payment_account_transaction"]
+    actual_bank_facts = [item for item in bank_facts if item.get("source_type") == "bank_transaction"]
+    settlement_links, settlement_link_stats = link_payment_accounts_to_banks(
+        payment_account_facts,
+        actual_bank_facts,
+    )
     _apply_link_status(order_facts, bank_facts, links)
 
     facts = sorted(
@@ -52,6 +63,8 @@ def run(
     facts_json = output_path / "financial_transactions.json"
     links_jsonl = output_path / "financial_transaction_links.jsonl"
     links_json = output_path / "financial_transaction_links.json"
+    chain_links_jsonl = output_path / "payment_chain_links.jsonl"
+    chain_links_json = output_path / "payment_chain_links.json"
     report_path = output_path / "financial_transactions_quality_report.md"
     history_path = output_path / "financial_transactions_history.jsonl"
     source_hash_stats = enrich_source_file_hashes(facts, ctx.project_root)
@@ -66,6 +79,9 @@ def run(
     facts_json.write_text(json.dumps(facts, ensure_ascii=False, indent=2), encoding="utf-8")
     _write_jsonl(links_jsonl, links)
     links_json.write_text(json.dumps(links, ensure_ascii=False, indent=2), encoding="utf-8")
+    chain_links = links + settlement_links
+    _write_jsonl(chain_links_jsonl, chain_links)
+    chain_links_json.write_text(json.dumps(chain_links, ensure_ascii=False, indent=2), encoding="utf-8")
     report_path.write_text(
         build_financial_transaction_report(
             facts=facts,
@@ -86,10 +102,15 @@ def run(
         "json": str(facts_json),
         "links_jsonl": str(links_jsonl),
         "links_json": str(links_json),
+        "payment_chain_links": len(chain_links),
+        "payment_chain_links_jsonl": str(chain_links_jsonl),
+        "payment_chain_links_json": str(chain_links_json),
+        "settlement_link_stats": settlement_link_stats,
         "quality_report": str(report_path),
         "history": str(history_path),
         "history_records_added": history_added,
         "source_hashes": source_hash_stats,
+        "flow_hashes": flow_hash_stats,
         "traceability": trace_stats,
         "link_stats": link_stats,
     }

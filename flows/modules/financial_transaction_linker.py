@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from datetime import datetime
 from typing import Any
 
 from flows.modules.bank_transaction_schema import parse_decimal
 from flows.modules.financial_transaction_schema import normalized_text
+from flows.modules.flow_hashes import link_hash
 
 
 MAX_DAYS = 7
@@ -22,12 +21,15 @@ def link_orders_to_payments(
         for fact in bank_facts
         if fact.get("direction") == "outflow" and fact.get("amount") and fact.get("business_type") == "expense"
     ]
+    payments_by_amount: dict[str, list[dict[str, Any]]] = {}
+    for payment in payments:
+        payments_by_amount.setdefault(str(payment.get("amount", "")), []).append(payment)
     links: list[dict[str, Any]] = []
     for order in order_facts:
         if not order.get("amount"):
             continue
         candidates = []
-        for payment in payments:
+        for payment in payments_by_amount.get(str(order.get("amount", "")), []):
             score, evidence = _score_pair(order, payment)
             if score >= MIN_CANDIDATE_SCORE:
                 candidates.append((score, evidence, payment))
@@ -43,6 +45,45 @@ def link_orders_to_payments(
         "candidate_strength": len(links) - exact,
         "min_candidate_score": MIN_CANDIDATE_SCORE,
         "max_days": MAX_DAYS,
+    }
+
+
+def link_payment_accounts_to_banks(
+    payment_account_facts: list[dict[str, Any]],
+    bank_facts: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    """Build conservative wallet-to-bank edges using exact amount, channel and near date."""
+    bank_payments = [
+        item for item in bank_facts
+        if item.get("direction") == "outflow" and item.get("amount") and item.get("business_type") == "expense"
+    ]
+    banks_by_amount_channel: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for bank in bank_payments:
+        key = (str(bank.get("amount", "")), str(bank.get("payment_channel", "")))
+        banks_by_amount_channel.setdefault(key, []).append(bank)
+    links: list[dict[str, Any]] = []
+    for wallet in payment_account_facts:
+        if wallet.get("direction") != "outflow" or not wallet.get("amount"):
+            continue
+        key = (str(wallet.get("amount", "")), str(wallet.get("payment_channel", "")))
+        candidates: list[tuple[int, list[str], dict[str, Any]]] = []
+        for bank in banks_by_amount_channel.get(key, []):
+            days = _day_delta(wallet.get("occurrence_time", ""), bank.get("occurrence_time", ""))
+            if days is None or days > 3:
+                continue
+            score = 100 if days == 0 else 95 if days == 1 else 90
+            evidence = ["amount_exact", "payment_channel_match", "same_day" if days == 0 else f"within_{days}_days"]
+            candidates.append((score, evidence, bank))
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        ambiguous = len(candidates) > 1
+        for score, evidence, bank in candidates[:5]:
+            if ambiguous:
+                evidence = [*evidence, "ambiguous_multiple_bank_candidates"]
+            links.append(_make_wallet_bank_link(wallet, bank, score, evidence, ambiguous))
+    return links, {
+        "payment_account_candidates": len(payment_account_facts),
+        "bank_payment_candidates": len(bank_payments),
+        "links": len(links),
     }
 
 
@@ -115,15 +156,54 @@ def _make_link(order: dict[str, Any], payment: dict[str, Any], score: int, evide
         "order_summary": order.get("summary", ""),
         "payment_summary": payment.get("summary", ""),
     }
-    payload = {
-        "order": link["order_financial_transaction_id"],
-        "payment": link["payment_financial_transaction_id"],
-        "relation": link["relation"],
-    }
-    link["link_id"] = "fin_link_" + hashlib.sha256(
-        json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()[:20]
+    digest = link_hash(
+        str(order.get("flow_hash_sha256") or link["order_financial_transaction_id"]),
+        str(payment.get("flow_hash_sha256") or link["payment_financial_transaction_id"]),
+        link["relation"],
+    )
+    link["link_hash_sha256"] = digest
+    link["link_id"] = "fin_link_" + digest[:20]
     return link
+
+
+def _make_wallet_bank_link(
+    wallet: dict[str, Any],
+    bank: dict[str, Any],
+    score: int,
+    evidence: list[str],
+    ambiguous: bool = False,
+) -> dict[str, Any]:
+    wallet_id = str(wallet.get("financial_transaction_id", ""))
+    bank_id = str(bank.get("financial_transaction_id", ""))
+    digest = link_hash(
+        str(wallet.get("flow_hash_sha256") or wallet_id),
+        str(bank.get("flow_hash_sha256") or bank_id),
+        "funded_by",
+    )
+    return {
+        "link_id": "fin_link_" + digest[:20],
+        "link_hash_sha256": digest,
+        "record_type": "financial_transaction_link",
+        "relation": "funded_by",
+        "match_strength": "linked" if score >= 95 and not ambiguous else "candidate",
+        "score": score,
+        "evidence": evidence,
+        "from_financial_transaction_id": wallet_id,
+        "to_financial_transaction_id": bank_id,
+        "payment_account_financial_transaction_id": wallet_id,
+        "bank_financial_transaction_id": bank_id,
+        "payment_account_transaction_id": wallet.get("source_record_ids", {}).get(
+            "payment_account_transaction_id", ""
+        ),
+        "bank_transaction_id": bank.get("source_record_ids", {}).get("bank_transaction_id", ""),
+        "amount": wallet.get("amount", ""),
+        "currency": wallet.get("currency", "CNY"),
+        "payment_account_time": wallet.get("occurrence_time", ""),
+        "bank_time": bank.get("occurrence_time", ""),
+        "payment_channel": wallet.get("payment_channel", ""),
+        "payment_account_summary": wallet.get("summary", ""),
+        "bank_summary": bank.get("summary", ""),
+    }
 
 
 def _day_delta(left: str, right: str) -> int | None:

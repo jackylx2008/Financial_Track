@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from decimal import Decimal, InvalidOperation
 from typing import Any
+
+from flows.modules.flow_hashes import bank_transaction_hash
 
 
 MONEY_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$|^[+-]?\d+(?:\.\d{1,2})?$")
@@ -41,6 +41,8 @@ def make_transaction(
     account_key = make_account_key(bank_key, account_tail)
     transaction = {
         "transaction_id": "",
+        "transaction_hash_sha256": "",
+        "flow_hash_sha256": "",
         "bank_key": bank_key or "unknown",
         "bank_name": bank_name,
         "account_key": account_key,
@@ -64,6 +66,8 @@ def make_transaction(
         "warnings": warnings or [],
         "raw_record": raw_record,
     }
+    transaction["transaction_hash_sha256"] = bank_transaction_hash(transaction)
+    transaction["flow_hash_sha256"] = transaction["transaction_hash_sha256"]
     transaction["transaction_id"] = stable_transaction_id(transaction)
     _add_missing_field_warnings(transaction)
     return transaction
@@ -119,19 +123,7 @@ def make_account_key(bank_key: str, account_tail: str) -> str:
 
 
 def stable_transaction_id(transaction: dict[str, Any]) -> str:
-    payload = {
-        "bank_key": transaction.get("bank_key", ""),
-        "account_key": transaction.get("account_key", ""),
-        "transaction_time": transaction.get("transaction_time", ""),
-        "posting_date": transaction.get("posting_date", ""),
-        "direction": transaction.get("direction", ""),
-        "amount": transaction.get("amount", ""),
-        "summary": normalize_text_key(transaction.get("summary", "")),
-        "counterparty": normalize_text_key(transaction.get("counterparty", "")),
-        "reference": transaction.get("transaction_reference", ""),
-    }
-    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:20]
-    return f"bank_tx_{digest}"
+    return f"bank_tx_{bank_transaction_hash(transaction)[:20]}"
 
 
 def normalize_text_key(value: str) -> str:

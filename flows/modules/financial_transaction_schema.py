@@ -1,11 +1,14 @@
 from __future__ import annotations
 
-import hashlib
 import re
 from decimal import Decimal
 from typing import Any
 
 from flows.modules.bank_transaction_schema import decimal_to_string, parse_decimal
+from flows.modules.flow_hashes import financial_transaction_hash
+
+
+PAYMENT_ACCOUNT_KEYS = {"alipay", "wechat"}
 
 
 PLATFORM_ALIASES = {
@@ -59,10 +62,17 @@ def bank_transaction_to_fact(transaction: dict[str, Any]) -> dict[str, Any]:
         or _extract_date(transaction.get("summary", ""))
         or _extract_date(transaction.get("raw_record", {}).get("raw_line", ""))
     )
+    payment_account = transaction.get("bank_key") in PAYMENT_ACCOUNT_KEYS
+    source_type = "payment_account_transaction" if payment_account else "bank_transaction"
     fact = _base_fact(
-        source_type="bank_transaction",
+        source_type=source_type,
         source_id=transaction.get("transaction_id", ""),
-        fact_type="bank_payment" if direction == "outflow" else "bank_money_movement",
+        fact_type=(
+            "payment_account_payment" if payment_account and direction == "outflow"
+            else "payment_account_money_movement" if payment_account
+            else "bank_payment" if direction == "outflow"
+            else "bank_money_movement"
+        ),
         business_type=business_type,
         occurrence_time=occurrence_time,
         amount=amount,
@@ -77,7 +87,10 @@ def bank_transaction_to_fact(transaction: dict[str, Any]) -> dict[str, Any]:
         title="",
         summary=transaction.get("summary", ""),
         status="posted",
-        source_record_ids={"bank_transaction_id": transaction.get("transaction_id", "")},
+        source_record_ids={
+            ("payment_account_transaction_id" if payment_account else "bank_transaction_id"):
+                transaction.get("transaction_id", "")
+        },
         source_records=transaction.get("source_records", []),
         confidence=float(transaction.get("confidence", 0.5)),
         warnings=transaction.get("warnings", []),
@@ -86,7 +99,7 @@ def bank_transaction_to_fact(transaction: dict[str, Any]) -> dict[str, Any]:
     if direction == "unknown":
         fact["warnings"] = sorted(set(fact["warnings"] + ["unknown_money_direction"]))
     merged_ids = [
-        stable_financial_transaction_id("bank_transaction", str(transaction_id))
+        stable_financial_transaction_id(source_type, str(transaction_id))
         for transaction_id in transaction.get("merged_transaction_ids", [])
         if transaction_id
     ]
@@ -105,6 +118,10 @@ def infer_platform(record: dict[str, Any]) -> str:
 
 
 def infer_payment_channel(record: dict[str, Any]) -> str:
+    if record.get("bank_key") == "alipay":
+        return "alipay"
+    if record.get("bank_key") == "wechat":
+        return "wechat_pay"
     text = _record_text(record).lower()
     if "支付宝" in text or "alipay" in text:
         return "alipay"
@@ -118,8 +135,7 @@ def infer_payment_channel(record: dict[str, Any]) -> str:
 
 
 def stable_financial_transaction_id(source_type: str, source_id: str) -> str:
-    digest = hashlib.sha256(f"{source_type}:{source_id}".encode("utf-8")).hexdigest()[:20]
-    return f"fin_tx_{digest}"
+    return f"fin_tx_{financial_transaction_hash(source_type, source_id)[:20]}"
 
 
 def normalized_text(value: str) -> str:
@@ -151,8 +167,11 @@ def _base_fact(
     warnings: list[str],
     raw_record: dict[str, Any],
 ) -> dict[str, Any]:
+    digest = financial_transaction_hash(source_type, source_id)
     return {
-        "financial_transaction_id": stable_financial_transaction_id(source_type, source_id),
+        "financial_transaction_id": f"fin_tx_{digest[:20]}",
+        "financial_transaction_hash_sha256": digest,
+        "flow_hash_sha256": digest,
         "record_type": "financial_transaction",
         "fact_type": fact_type,
         "business_type": business_type,

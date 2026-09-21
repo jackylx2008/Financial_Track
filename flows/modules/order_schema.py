@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import hashlib
-import json
 import re
 from typing import Any
 
-from flows.modules.bank_transaction_schema import decimal_to_string, normalize_text_key, parse_decimal
+from flows.modules.bank_transaction_schema import decimal_to_string, parse_decimal
+from flows.modules.flow_hashes import order_hash
 
 
 def make_order(
@@ -41,6 +40,8 @@ def make_order(
     order = {
         "record_type": "platform_order",
         "order_record_id": "",
+        "order_hash_sha256": "",
+        "flow_hash_sha256": "",
         "platform": platform or "unknown",
         "source_type": source_type,
         "source_file": source_file,
@@ -75,22 +76,14 @@ def make_order(
         "raw_record": raw_record,
     }
     _add_quality_warnings(order)
+    order["order_hash_sha256"] = order_hash(order)
+    order["flow_hash_sha256"] = order["order_hash_sha256"]
     order["order_record_id"] = stable_order_record_id(order)
     return order
 
 
 def stable_order_record_id(order: dict[str, Any]) -> str:
-    payload = {
-        "platform": order.get("platform", ""),
-        "order_id": order.get("order_id", ""),
-        "order_time": order.get("order_time", ""),
-        "merchant": normalize_text_key(order.get("merchant", "")),
-        "title": normalize_text_key(order.get("title", "")),
-        "spec": normalize_text_key(order.get("spec", "")),
-        "paid_amount": order.get("paid_amount", ""),
-    }
-    digest = hashlib.sha256(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:20]
-    return f"order_{digest}"
+    return f"order_{order_hash(order)[:20]}"
 
 
 def _clean_money(value: str) -> str:

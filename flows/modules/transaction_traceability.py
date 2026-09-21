@@ -7,6 +7,12 @@ from typing import Any
 
 
 TRACE_FIELDS = {
+    "source_record_sha256",
+    "transaction_hash_sha256",
+    "order_hash_sha256",
+    "financial_transaction_hash_sha256",
+    "flow_hash_sha256",
+    "link_hash_sha256",
     "record_fingerprint_sha256",
     "lineage_fingerprint_sha256",
     "record_version",
@@ -66,7 +72,91 @@ def enrich_source_file_hashes(records: list[dict[str, Any]], project_root: Path)
                     else:
                         missing += 1
                 source[f"{field}_sha256"] = cache[cache_key]
-    return {"source_files_hashed": hashed, "source_files_missing": missing}
+    source_records_hashed = enrich_source_record_hashes(records)
+    return {
+        "source_files_hashed": hashed,
+        "source_files_missing": missing,
+        "source_records_hashed": source_records_hashed,
+    }
+
+
+def enrich_source_record_hashes(records: list[dict[str, Any]]) -> int:
+    """Give every raw row/page/email candidate its own stable, full SHA-256 marker."""
+    count = 0
+    for record in records:
+        for source in record.get("source_records", []):
+            payload = {
+                key: value
+                for key, value in source.items()
+                if key != "source_record_sha256"
+                and not (key in SOURCE_FILE_FIELDS and source.get(f"{key}_sha256"))
+            }
+            source["source_record_sha256"] = _sha256_json(payload)
+            count += 1
+    return count
+
+
+def assign_flow_hashes(records: list[dict[str, Any]], id_field: str) -> dict[str, int]:
+    """Attach full entity hashes while retaining the existing short compatibility IDs."""
+    from flows.modules.flow_hashes import (
+        bank_transaction_hash,
+        financial_transaction_hash,
+        order_hash,
+    )
+
+    hash_field = {
+        "transaction_id": "transaction_hash_sha256",
+        "order_record_id": "order_hash_sha256",
+        "financial_transaction_id": "financial_transaction_hash_sha256",
+    }[id_field]
+    for record in records:
+        if id_field == "transaction_id":
+            source_hashes = sorted(
+                str(item.get("source_record_sha256"))
+                for item in record.get("source_records", [])
+                if item.get("source_record_sha256")
+            )
+            digest = _sha256_json(
+                {
+                    "business_hash_sha256": bank_transaction_hash(record),
+                    "record_content_sha256": record_fingerprint(record),
+                    "source_record_hashes_sha256": source_hashes,
+                    "source_lineage_sha256": "" if source_hashes else lineage_fingerprint(record, id_field),
+                }
+            )
+        elif id_field == "order_record_id":
+            source_hashes = sorted(
+                str(item.get("source_record_sha256"))
+                for item in record.get("source_records", [])
+                if item.get("source_record_sha256")
+            )
+            digest = _sha256_json(
+                {
+                    "business_hash_sha256": order_hash(record),
+                    "record_content_sha256": record_fingerprint(record),
+                    "source_record_hashes_sha256": source_hashes,
+                    "source_lineage_sha256": "" if source_hashes else lineage_fingerprint(record, id_field),
+                }
+            )
+        else:
+            source_type = str(record.get("source_type", ""))
+            source_ids = record.get("source_record_ids", {})
+            source_id = next((str(value) for value in source_ids.values() if value), "")
+            source_flow_hash = str(record.get("raw_record", {}).get("flow_hash_sha256", ""))
+            digest = _sha256_json(
+                {
+                    "identity_hash_sha256": financial_transaction_hash(source_type, source_id),
+                    "source_flow_hash_sha256": source_flow_hash,
+                }
+            )
+        record[hash_field] = digest
+        record["flow_hash_sha256"] = digest
+    unique = len({record["flow_hash_sha256"] for record in records})
+    return {
+        "flows_hashed": len(records),
+        "unique_flow_hashes": unique,
+        "duplicate_flow_hashes": len(records) - unique,
+    }
 
 
 def apply_record_traceability(
