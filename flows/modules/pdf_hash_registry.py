@@ -33,9 +33,11 @@ def sync_pdf_hash_registry(
     documents: list[dict[str, Any]],
     *,
     invalidate_ocr: bool = False,
+    invalidate_ocr_hashes: set[str] | None = None,
 ) -> dict[str, Any]:
     registry = load_pdf_hash_registry(review_dir)
     entries = registry["documents"]
+    invalidated_hashes = invalidate_ocr_hashes or set()
     now = _timestamp()
     legacy_verified = _legacy_verified_hashes(review_dir, documents) if not entries else set()
     for entry in entries.values():
@@ -72,7 +74,7 @@ def sync_pdf_hash_registry(
         if digest in legacy_verified:
             entry["ocr_status"] = "passed"
             entry["ocr_verified_at"] = _legacy_report_time(review_dir) or now
-        if invalidate_ocr:
+        if invalidate_ocr or digest in invalidated_hashes:
             entry["ocr_status"] = "pending"
             entry["ocr_verified_at"] = ""
     registry["updated_at"] = now

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,8 @@ from flows.modules.pdf_hash_registry import sync_pdf_hash_registry
 logger = logging.getLogger(__name__)
 
 BEIJING_TIMEZONE = timezone(timedelta(hours=8), name="北京时间")
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
+TEXT_ANGLE_TOLERANCE_DEGREES = 2.0
 DEFAULT_CACHE_ROOT = Path("processed_data/pdf_html_review/cache")
 
 
@@ -32,6 +34,7 @@ def export_pdf_tables(
 
     documents: list[dict[str, Any]] = []
     converted = reused = upgraded = failed = 0
+    extracted_hashes: set[str] = set()
     for index, path in enumerate(pdf_paths, start=1):
         digest = sha256_file(path)
         cache_path = cache_dir / f"{digest}.json"
@@ -42,6 +45,7 @@ def export_pdf_tables(
                 cached = extract_pdf_tables(path, digest)
                 _write_json(cache_path, cached)
                 converted += 1
+                extracted_hashes.add(digest)
                 status = "converted"
             else:
                 reused += 1
@@ -97,7 +101,12 @@ def export_pdf_tables(
     }
     manifest_path = output_dir / "pdf_html_manifest.json"
     review_path = output_dir / "bank_pdf_tables_review.html"
-    registry = sync_pdf_hash_registry(output_dir, documents, invalidate_ocr=force)
+    registry = sync_pdf_hash_registry(
+        output_dir,
+        documents,
+        invalidate_ocr=force,
+        invalidate_ocr_hashes=extracted_hashes,
+    )
     for document in documents:
         entry = registry["documents"].get(document.get("sha256", ""), {})
         document["ocr_status"] = entry.get("ocr_status", "pending")
@@ -123,8 +132,9 @@ def extract_pdf_tables(path: Path, digest: str | None = None) -> dict[str, Any]:
     table_count = row_count = 0
     with pdfplumber.open(path) as document:
         for page_number, page in enumerate(document.pages, start=1):
+            filtered_page = page.filter(_keep_non_diagonal_object)
             tables: list[dict[str, Any]] = []
-            for table_index, table in enumerate(page.find_tables(), start=1):
+            for table_index, table in enumerate(filtered_page.find_tables(), start=1):
                 rows = _normalize_rows(table.extract() or [])
                 widths = [max(1.0, float(column.bbox[2] - column.bbox[0])) for column in table.columns]
                 tables.append(
@@ -142,7 +152,7 @@ def extract_pdf_tables(path: Path, digest: str | None = None) -> dict[str, Any]:
                     "page_number": page_number,
                     "width": round(float(page.width), 3),
                     "height": round(float(page.height), 3),
-                    "text": page.extract_text(layout=True) or "",
+                    "text": filtered_page.extract_text(layout=True) or "",
                     "tables": tables,
                 }
             )
@@ -154,7 +164,7 @@ def extract_pdf_tables(path: Path, digest: str | None = None) -> dict[str, Any]:
         "row_count": row_count,
         "pages": pages,
     }
-    _add_parser_text(payload, path)
+    _set_parser_text(payload, "\n".join(page["text"] for page in pages))
     return payload
 
 
@@ -219,11 +229,33 @@ def _document_payload(
 
 
 def _add_parser_text(payload: dict[str, Any], path: Path) -> None:
-    from pypdf import PdfReader
+    import pdfplumber
 
-    text = "\n".join(page.extract_text() or "" for page in PdfReader(str(path)).pages)
+    with pdfplumber.open(path) as document:
+        text = "\n".join(
+            page.filter(_keep_non_diagonal_object).extract_text(layout=True) or ""
+            for page in document.pages
+        )
+    _set_parser_text(payload, text)
+
+
+def _set_parser_text(payload: dict[str, Any], text: str) -> None:
     payload["parser_text"] = text
     payload["parser_text_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _keep_non_diagonal_object(item: dict[str, Any]) -> bool:
+    if item.get("object_type") != "char":
+        return True
+    matrix = item.get("matrix")
+    if not isinstance(matrix, (list, tuple)) or len(matrix) < 2:
+        return True
+    a, b = float(matrix[0]), float(matrix[1])
+    if abs(a) < 1e-9 and abs(b) < 1e-9:
+        return True
+    angle = abs(math.degrees(math.atan2(b, a))) % 180
+    distance_to_axis = min(angle, abs(90 - angle), abs(180 - angle))
+    return distance_to_axis <= TEXT_ANGLE_TOLERANCE_DEGREES
 
 
 def _normalize_rows(rows: list[list[Any]]) -> list[list[str]]:

@@ -11,6 +11,46 @@ from flows.modules.pdf_table_html import export_pdf_tables, read_cached_pdf_text
 
 
 class PdfTableHtmlTests(unittest.TestCase):
+    def test_diagonal_watermark_is_removed_before_table_extraction(self) -> None:
+        from reportlab.pdfgen import canvas
+
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "watermarked.pdf"
+            document = canvas.Canvas(str(pdf_path), pagesize=(500, 240))
+            x_positions = (30, 180, 320, 470)
+            y_positions = (40, 90, 140, 190)
+            for x in x_positions:
+                document.line(x, y_positions[0], x, y_positions[-1])
+            for y in y_positions:
+                document.line(x_positions[0], y, x_positions[-1], y)
+            rows = (
+                ("Date", "Amount", "Summary"),
+                ("2026-01-02", "12.34", "Sample"),
+                ("2026-01-03", "56.78", "Other"),
+            )
+            for row_index, row in enumerate(rows):
+                for column, value in enumerate(row):
+                    document.drawString(x_positions[column] + 5, 165 - row_index * 50, value)
+            document.saveState()
+            document.setFillGray(0.75)
+            document.translate(70, 60)
+            document.rotate(30)
+            document.setFont("Helvetica", 22)
+            document.drawString(0, 0, "WATERMARK 123456")
+            document.restoreState()
+            document.save()
+
+            result = export_pdf_tables(
+                Path(directory), Path(directory), Path(directory) / "review"
+            )
+            cache_path = next((Path(directory) / "review" / "cache").glob("*.json"))
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(result["rows"], 3)
+            self.assertEqual(cached["pages"][0]["tables"][0]["rows"], [list(row) for row in rows])
+            self.assertNotIn("WATERMARK", cached["parser_text"])
+            self.assertNotIn("123456", cached["parser_text"])
+
     def test_exports_tables_and_reuses_sha256_cache(self) -> None:
         import fitz
 

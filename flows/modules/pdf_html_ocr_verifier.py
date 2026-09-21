@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import tempfile
 from collections import Counter
@@ -15,6 +16,7 @@ from flows.modules.pdf_hash_registry import load_pdf_hash_registry, update_ocr_s
 logger = logging.getLogger(__name__)
 BEIJING_TIMEZONE = timezone(timedelta(hours=8), name="北京时间")
 TEXT_CHAR_RE = re.compile(r"[\u3400-\u9fffA-Za-z0-9]+")
+OCR_ANGLE_TOLERANCE_DEGREES = 8.0
 
 
 def representative_pages(page_count: int, pages_per_pdf: int) -> list[int]:
@@ -275,7 +277,23 @@ def _rapid_ocr(path: Path) -> str:
     result, _ = engine(str(path))
     if not result:
         return ""
-    return "\n".join(str(item[1]) for item in result)
+    return "\n".join(
+        str(item[1])
+        for item in result
+        if len(item) >= 2 and not is_diagonal_ocr_box(item[0])
+    )
+
+
+def is_diagonal_ocr_box(points: list[list[float]]) -> bool:
+    if len(points) < 2 or len(points[0]) < 2 or len(points[1]) < 2:
+        return False
+    delta_x = float(points[1][0]) - float(points[0][0])
+    delta_y = float(points[1][1]) - float(points[0][1])
+    if abs(delta_x) < 1e-9 and abs(delta_y) < 1e-9:
+        return False
+    angle = abs(math.degrees(math.atan2(delta_y, delta_x))) % 180
+    distance_to_horizontal = min(angle, abs(180 - angle))
+    return distance_to_horizontal > OCR_ANGLE_TOLERANCE_DEGREES
 
 
 def _normalized_chars(text: str) -> list[str]:

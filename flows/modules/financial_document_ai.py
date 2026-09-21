@@ -184,7 +184,8 @@ def _build_ocr_prompt(
     page_number: int,
 ) -> str:
     return f"""请直接读取这张银行文档页面图片并提取逐笔交易。不要把余额、额度、账单合计、
-本期应还或最低还款额当成交易。无法确认的字段使用空字符串，不要猜测。
+本期应还或最低还款额当成交易。忽略斜向或重复出现的灰色水印文字、电子印章、二维码及防伪标记；
+水印中的姓名、编号、日期、时间和数字不得写入任何交易字段。无法确认的字段使用空字符串，不要猜测。
 返回严格 JSON 对象，不要 Markdown：
 {{"transactions":[{{"transaction_time":"YYYY-MM-DD HH:MM:SS 或 YYYY-MM-DD","posting_date":"YYYY-MM-DD 或空",
 "amount":"绝对金额","direction":"inflow|outflow|unknown","merchant":"商户名称或空","counterparty":"对方户名或空",
