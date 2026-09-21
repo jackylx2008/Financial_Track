@@ -29,7 +29,8 @@
 
 项目先搭建了基本工程结构：
 
-- 根目录仅保留 `main.py` 图形入口和 `logging_config.py` 日志配置。
+- 根目录仅保留 `main.py` 主图形入口、`pdf_ocr_review_app.py` 独立只读 PDF/OCR 审核入口和
+  `logging_config.py` 日志配置。
 - `flows/*.py` 承接独立工作流，例如 `flows/jd_pdf_bot.py`、`flows/financial_email_bot.py`。
 - `flows/android_transaction_capture.py` 是统一安卓交易流水采集入口。
 - `flows/modules/android_adb.py` 封装设备发现、授权检查、屏幕尺寸、截图、坐标换算和滑动。

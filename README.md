@@ -32,7 +32,8 @@ Financial_Track/
 ```
 
 项目采用“根目录单一 GUI 入口 + `flows/` 工作流入口 + `flows/workflows/` 编排层 +
-`flows/modules/` 基础模块”的结构。除 `main.py` 和 `logging_config.py` 外，根目录不再放置 Python 文件。
+`flows/modules/` 基础模块”的结构。根目录仅保留 `main.py`、独立只读审核入口
+`pdf_ocr_review_app.py` 和 `logging_config.py`，其他 Python 入口仍放在 `flows/`。
 
 ## 数据来源策略与当前主线
 
@@ -527,6 +528,25 @@ PDF、Excel、CSV 或邮件文件可以点击并交给本机默认程序打开�
 `supersedes_record_ids` 和 `supersedes_record_fingerprints_sha256` 连接修正前后的版本。被替代的旧版本
 追加保存在 `bank_transactions_history.jsonl` 或 `financial_transactions_history.jsonl`，原有 PDF 页码、
 Excel/CSV 行号、工作表和邮件 UID 定位字段继续保留。
+
+### PDF 原页与识别数据双栏审核
+
+根目录独立入口 `pdf_ocr_review_app.py` 只用于人工核对已经生成过哈希缓存的 PDF，不重新 OCR、
+不执行归一化，也不把数据再次计入财务统计：
+
+```powershell
+python pdf_ocr_review_app.py
+```
+
+程序默认选择交通银行案例。左侧按页渲染原始 PDF，右侧使用同一 SHA-256 缓存中的逐页识别表格，
+两侧保持完全相同的页面高度和纵向滚动位置；左右分别提供横向滚动条。可以切换机构、PDF、页码和缩放比例，
+也可以选择任意已有缓存的 PDF。每页可标记“待审核”“一致”或“存在问题”并填写备注，结论独立保存到：
+
+```text
+processed_data/pdf_html_review/pdf_ocr_manual_review.json
+```
+
+该审核文件和识别缓存均含本地个人数据，已处于 Git 忽略目录。
 
 ## 归一化、账本与人工校核
 

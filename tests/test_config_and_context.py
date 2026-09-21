@@ -81,10 +81,13 @@ class AppContextTests(unittest.TestCase):
                 handler.close()
                 logging.getLogger().removeHandler(handler)
 
-    def test_project_root_only_contains_gui_and_logging_python_files(self) -> None:
+    def test_project_root_only_contains_authorized_gui_and_logging_python_files(self) -> None:
         project_root = Path(__file__).resolve().parents[1]
         python_files = {path.name for path in project_root.glob("*.py")}
-        self.assertEqual(python_files, {"main.py", "logging_config.py"})
+        self.assertEqual(
+            python_files,
+            {"main.py", "pdf_ocr_review_app.py", "logging_config.py"},
+        )
 
 
 if __name__ == "__main__":

@@ -5,7 +5,8 @@
 
 ## 项目结构
 
-- 根目录只保留 `main.py` GUI 入口和 `logging_config.py` 日志配置。
+- 根目录只保留 `main.py` 主 GUI 入口、`pdf_ocr_review_app.py` 独立只读 PDF/OCR 审核入口和
+  `logging_config.py` 日志配置。
 - `flows/*.py` 是可独立执行的工作流入口，只负责参数解析、配置、日志、上下文、编排调用和退出状态。
 - `flows/workflows/` 负责场景编排，`flows/modules/` 负责单一职责的可复用能力。
 - 配置统一从根目录 `config.yaml` 加载，本机差异和凭据仅放在被忽略的 `common.env` 或专用 env 文件。
