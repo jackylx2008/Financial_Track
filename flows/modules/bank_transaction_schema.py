@@ -33,6 +33,7 @@ def make_transaction(
     confidence: float = 0.5,
     warnings: list[str] | None = None,
     raw_record: Any | None = None,
+    require_account_tail: bool = True,
 ) -> dict[str, Any]:
     amount_decimal = parse_decimal(amount)
     balance_decimal = parse_decimal(balance)
@@ -69,7 +70,7 @@ def make_transaction(
     transaction["transaction_hash_sha256"] = bank_transaction_hash(transaction)
     transaction["flow_hash_sha256"] = transaction["transaction_hash_sha256"]
     transaction["transaction_id"] = stable_transaction_id(transaction)
-    _add_missing_field_warnings(transaction)
+    _add_missing_field_warnings(transaction, require_account_tail=require_account_tail)
     return transaction
 
 
@@ -135,12 +136,16 @@ def parse_money_token(value: str) -> str:
     return text if MONEY_RE.match(str(value).strip()) or MONEY_RE.match(text) else ""
 
 
-def _add_missing_field_warnings(transaction: dict[str, Any]) -> None:
+def _add_missing_field_warnings(
+    transaction: dict[str, Any],
+    *,
+    require_account_tail: bool = True,
+) -> None:
     checks = {
         "missing_amount": not transaction.get("amount"),
         "missing_direction": transaction.get("direction") == "unknown",
         "missing_transaction_time": not transaction.get("transaction_time"),
-        "missing_account_tail": not transaction.get("account_tail"),
+        "missing_account_tail": require_account_tail and not transaction.get("account_tail"),
     }
     for warning, active in checks.items():
         if active and warning not in transaction["warnings"]:

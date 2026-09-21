@@ -5,7 +5,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from openpyxl import Workbook
 
@@ -137,12 +137,162 @@ CN
 
 
 class AttachmentParserTests(unittest.TestCase):
+    def test_human_approved_pdf_is_never_sent_to_ai_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pdf_path = root / "approved.pdf"
+            pdf_path.write_bytes(b"reviewed")
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    [
+                        {
+                            "status": "success",
+                            "bank_key": "icbc",
+                            "bank_name": "工商银行",
+                            "output_files": [str(pdf_path)],
+                        }
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            ai_fallback = Mock()
+            ai_fallback.stats.return_value = {}
+            with patch(
+                "flows.modules.financial_attachment_reader._read_pdf_transactions",
+                return_value=[],
+            ), patch(
+                "flows.modules.financial_attachment_reader.read_reviewed_pdf_pages",
+                return_value=[],
+            ), patch(
+                "flows.modules.financial_attachment_reader._read_attachment_with_ai",
+                side_effect=AssertionError("approved PDF must not be sent to AI"),
+            ):
+                rows, stats = read_attachment_transactions(manifest_path, ai_fallback)
+
+        self.assertEqual(rows, [])
+        self.assertEqual(len(stats["unresolved_files"]), 1)
+        self.assertIn("禁止再次 AI/OCR", stats["unresolved_files"][0]["reason"])
+
+    def test_human_approved_bocom_pdf_uses_table_cache_without_ai(self) -> None:
+        pages = [
+            {
+                "page_number": 3,
+                "tables": [
+                    {
+                        "rows": [
+                            [
+                                "序号\nSerial",
+                                "交易日期\nTrans Date",
+                                "交易时间\nTrans Time",
+                                "交易类型\nTrading Type",
+                                "借贷状态\nDc Flg",
+                                "交易金额\nTrans Amt",
+                                "余额\nBalance",
+                                "对方账号\nPayment Receipt",
+                                "对方户名\nPayment Receipt",
+                                "交易地点\nTrading Place",
+                                "摘要\nAbstract",
+                            ],
+                            [
+                                "1",
+                                "2026-01-02",
+                                "10:11:12",
+                                "支付",
+                                "D",
+                                "88.50",
+                                "1000.00",
+                                "6222****5678",
+                                "示例商户",
+                                "网上银行",
+                                "消费",
+                            ],
+                        ]
+                    }
+                ],
+            }
+        ]
+        with patch(
+            "flows.modules.financial_attachment_reader.read_reviewed_pdf_pages",
+            return_value=pages,
+        ), patch(
+            "flows.modules.financial_attachment_reader.read_cached_pdf_text",
+            side_effect=AssertionError("approved PDF must use reviewed table cache"),
+        ):
+            rows = _read_pdf_transactions(
+                Path("statement.pdf"),
+                {"bank_key": "attachment_keyword", "bank_name": "交通银行"},
+            )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bank_key"], "bocom")
+        self.assertEqual(rows[0]["card_type"], "借记卡")
+        self.assertEqual(rows[0]["direction"], "outflow")
+        self.assertEqual(rows[0]["amount"], "88.50")
+        self.assertEqual(rows[0]["source_records"][0]["page"], 3)
+
+    def test_human_approved_icbc_credit_pdf_uses_trading_place_as_merchant(self) -> None:
+        pages = [
+            {
+                "page_number": 1,
+                "tables": [
+                    {
+                        "rows": [
+                            [
+                                "入账日期",
+                                "交易卡号",
+                                "收\n支",
+                                "交易币种",
+                                "交易金额",
+                                "入账币种",
+                                "入账金额",
+                                "账户余额",
+                                "对方户名",
+                                "对方账号",
+                                "摘要",
+                                "交易场所",
+                            ],
+                            [
+                                "2026-01-02 10:11:12",
+                                "6222000000005670",
+                                "借",
+                                "人民币",
+                                "88.50",
+                                "人民币",
+                                "88.50",
+                                "-88.50",
+                                "",
+                                "",
+                                "消费",
+                                "示例商户全名",
+                            ],
+                        ]
+                    }
+                ],
+            }
+        ]
+        with patch(
+            "flows.modules.financial_attachment_reader.read_reviewed_pdf_pages",
+            return_value=pages,
+        ):
+            rows = _read_pdf_transactions(
+                Path("statement.pdf"),
+                {"bank_key": "icbc", "bank_name": "工商银行"},
+            )
+
+        self.assertEqual(rows[0]["merchant"], "示例商户全名")
+        self.assertEqual(rows[0]["transaction_card_tail"], "5670")
+        self.assertEqual(rows[0]["card_type"], "信用卡")
+
     def test_pdf_parser_uses_reviewed_hash_cache_without_reading_pdf(self) -> None:
         cached = """卡号：4135200057130789
 2015-07-15
 14:03:55 6225970027495670 借 人民币 441.56 人民币 441.56 -441.56 消费 示例医院
 """
         with patch(
+            "flows.modules.financial_attachment_reader.read_reviewed_pdf_pages",
+            return_value=None,
+        ), patch(
             "flows.modules.financial_attachment_reader.read_cached_pdf_text",
             return_value=cached,
         ), patch("pypdf.PdfReader", side_effect=AssertionError("source PDF should not be read")):
@@ -302,6 +452,7 @@ class AttachmentParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["amount"], "4500.00")
         self.assertEqual(rows[0]["counterparty_account"], "767501*******0001")
         self.assertEqual(rows[0]["counterparty"], "示例支付机构")
+        self.assertNotIn("missing_account_tail", rows[0]["warnings"])
         self.assertEqual(rows[0]["source_records"][0]["sheet"], "Sheet1")
         self.assertEqual(rows[0]["source_records"][0]["row"], 2)
         self.assertEqual(rows[1]["direction"], "inflow")

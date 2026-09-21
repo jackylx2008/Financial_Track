@@ -10,7 +10,7 @@ from typing import Any
 
 from flows.modules.bank_transaction_schema import make_transaction, parse_money_token
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
-from flows.modules.pdf_table_html import read_cached_pdf_text
+from flows.modules.pdf_table_html import read_cached_pdf_text, read_reviewed_pdf_pages
 
 
 DATE_LINE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -111,7 +111,12 @@ def read_attachment_transactions(
                 elif path.suffix.lower() == ".csv":
                     parsed = _read_csv_transactions(path, item)
                 if not parsed:
-                    if ai_fallback is not None and path.suffix.lower() in {".pdf", ".xls", ".xlsx", ".csv"}:
+                    reviewed_pdf = path.suffix.lower() == ".pdf" and read_reviewed_pdf_pages(path) is not None
+                    if reviewed_pdf:
+                        unresolved_files.append(
+                            _unresolved_file(path, item, "人工审核通过的 PDF 缓存未提取到交易；禁止再次 AI/OCR")
+                        )
+                    elif ai_fallback is not None and path.suffix.lower() in {".pdf", ".xls", ".xlsx", ".csv"}:
                         pending_ai.append((path, item))
                     else:
                         unresolved_files.append(_unresolved_file(path, item))
@@ -160,6 +165,11 @@ def _unresolved_file(
 
 
 def _read_pdf_transactions(path: Path, manifest_item: dict[str, Any]) -> list[dict[str, Any]]:
+    reviewed_pages = read_reviewed_pdf_pages(path)
+    if reviewed_pages is not None:
+        rows = _read_reviewed_pdf_table_transactions(path, manifest_item, reviewed_pages)
+        logger.info("Using human-approved PDF table cache: %s transactions=%s", path, len(rows))
+        return rows
     text = read_cached_pdf_text(path)
     if text is None:
         from pypdf import PdfReader
@@ -489,6 +499,47 @@ def _read_xls_transactions(
     return transactions
 
 
+def _read_reviewed_pdf_table_transactions(
+    path: Path,
+    manifest_item: dict[str, Any],
+    pages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    transactions: list[dict[str, Any]] = []
+    for page in pages:
+        page_number = int(page.get("page_number", 0) or 0)
+        for table in page.get("tables", []):
+            table_rows = table.get("rows", [])
+            if not isinstance(table_rows, list) or len(table_rows) < 2:
+                continue
+            headers = [_reviewed_pdf_header(value) for value in table_rows[0]]
+            rows = [
+                {
+                    headers[index]: str(value or "").replace("\n", " ").strip()
+                    for index, value in enumerate(row[: len(headers)])
+                    if headers[index]
+                }
+                for row in table_rows[1:]
+                if isinstance(row, list)
+            ]
+            transactions.extend(
+                _read_generic_bank_rows(
+                    path,
+                    manifest_item,
+                    rows,
+                    "email_attachment_pdf_reviewed",
+                    first_data_row=2,
+                    page_number=page_number,
+                )
+            )
+    return transactions
+
+
+def _reviewed_pdf_header(value: Any) -> str:
+    lines = [line.strip() for line in str(value or "").splitlines() if line.strip()]
+    chinese_lines = [line for line in lines if re.search(r"[\u4e00-\u9fff]", line)]
+    return "".join(chinese_lines) if chinese_lines else (lines[0] if lines else "")
+
+
 def _read_alipay_legacy_csv_rows(
     path: Path,
     rows: list[dict[str, str]],
@@ -647,8 +698,18 @@ def _read_generic_bank_rows(
     sheet_name: str = "",
     first_data_row: int = 2,
     default_account_full_name: str = "",
+    page_number: int | None = None,
 ) -> list[dict[str, Any]]:
     transactions: list[dict[str, Any]] = []
+    bank_key = str(manifest_item.get("bank_key", "unknown") or "unknown")
+    bank_key = {
+        "交通银行": "bocom",
+        "工商银行": "icbc",
+        "建设银行": "ccb",
+        "招商银行": "cmb",
+        "光大银行": "ceb",
+    }.get(str(manifest_item.get("bank_name", "")).strip(), bank_key)
+    account_tail_expected = not (bank_key == "ceb" and source_type == "standalone_bank_xls")
     for offset, row in enumerate(rows):
         transaction_time = _first_value(row, "交易时间", "交易日期", "交易日", "发生时间", "记账时间")
         separate_date = _first_value(row, "交易日期", "交易日")
@@ -657,8 +718,10 @@ def _read_generic_bank_rows(
         posting_date = _first_value(row, "入账日期", "记账日期", "入账日")
         debit = _clean_money(_first_value(row, "支出金额", "借方发生额", "借方金额"))
         credit = _clean_money(_first_value(row, "收入金额", "存入金额", "贷方发生额", "贷方金额"))
-        amount = _clean_money(_first_value(row, "交易金额", "金额", "发生额"))
-        direction = _direction_from_cn(_first_value(row, "收/支", "收支", "交易方向", "借贷标志"))
+        amount = _clean_money(_first_value(row, "交易金额", "金额", "发生额", "收入/支出金额"))
+        direction = _direction_from_cn(
+            _first_value(row, "收/支", "收支", "交易方向", "借贷标志", "借贷状态")
+        )
         if parse_money_token(debit) and debit not in {"0", "0.0", "0.00"}:
             amount, direction = debit, "outflow"
         elif parse_money_token(credit) and credit not in {"0", "0.0", "0.00"}:
@@ -695,9 +758,16 @@ def _read_generic_bank_rows(
             counterparty = combined_counterparty
         merchant = _first_value(row, "商户名称", "商户", "交易商户") or counterparty
         account_full_name = _first_value(row, "账户名称", "户名", "本方户名")
-        account_number = _first_value(row, "卡号", "账号", "卡号/账号", "本方账号")
+        account_number = _first_value(row, "卡号", "账号", "卡号/账号", "本方账号", "交易卡号")
         account_display = account_full_name or _full_account_value(account_number) or default_account_full_name
         account_tail = _account_tail_from_text(account_number or default_account_full_name)
+        reviewed_icbc_credit = (
+            bank_key == "icbc"
+            and source_type == "email_attachment_pdf_reviewed"
+            and bool(_first_value(row, "交易卡号"))
+        )
+        if reviewed_icbc_credit and not merchant:
+            merchant = _first_value(row, "交易场所")
         source = {
             "source_type": source_type,
             "source_file": str(path),
@@ -707,39 +777,57 @@ def _read_generic_bank_rows(
         }
         if sheet_name:
             source["sheet"] = sheet_name
-        transactions.append(
-            make_transaction(
-                bank_key=str(manifest_item.get("bank_key", "unknown") or "unknown"),
-                bank_name=_bank_name(str(manifest_item.get("bank_key", ""))),
-                account_full_name=account_display,
-                account_tail=account_tail,
-                transaction_time=_normalize_date_time(transaction_time),
-                posting_date=_normalize_date_time(posting_date)[:10],
-                direction=direction,
-                amount=amount,
-                currency=_first_value(row, "币种", "货币") or "CNY",
-                merchant=merchant,
-                counterparty=counterparty,
-                counterparty_account=counterparty_account,
-                summary=summary,
-                balance=_clean_money(_first_value(row, "账户余额", "余额")),
-                channel=_first_value(
-                    row,
-                    "交易渠道",
-                    "渠道",
-                    "交易渠道名称",
-                    "交易场所",
-                    "交易地点",
-                    "交易地点/附言",
-                    "交易网点",
-                    "交易机构",
-                ),
-                transaction_reference=_first_value(row, "流水号", "交易流水号", "参考号", "交易序号"),
-                source_records=[source],
-                confidence=0.9,
-                raw_record=row,
-            )
+        if page_number:
+            source["page"] = page_number
+        normalized_posting_date = _normalize_date_time(posting_date)
+        normalized_transaction_time = _normalize_date_time(transaction_time) or normalized_posting_date
+        raw_record: dict[str, Any] = dict(row)
+        if source_type == "email_attachment_pdf_reviewed":
+            line_values = list(row.values())
+            if reviewed_icbc_credit:
+                entry_time = _first_value(row, "入账日期").split()
+                line_values = [entry_time[-1] if len(entry_time) > 1 else "", *line_values[1:]]
+            raw_record["line"] = " ".join(str(value or "").strip() for value in line_values)
+        transaction = make_transaction(
+            bank_key=bank_key,
+            bank_name=_bank_name(bank_key),
+            account_full_name=account_display,
+            account_tail=account_tail,
+            transaction_time=normalized_transaction_time,
+            posting_date=normalized_posting_date[:10],
+            direction=direction,
+            amount=amount,
+            currency=_first_value(row, "币种", "货币") or "CNY",
+            merchant=merchant,
+            counterparty=counterparty,
+            counterparty_account=counterparty_account,
+            summary=summary,
+            balance=_clean_money(_first_value(row, "账户余额", "余额")),
+            channel=_first_value(
+                row,
+                "交易渠道",
+                "渠道",
+                "交易渠道名称",
+                "交易场所",
+                "交易地点",
+                "交易地点/附言",
+                "交易网点",
+                "交易机构",
+            ),
+            transaction_reference=_first_value(row, "流水号", "交易流水号", "参考号", "交易序号"),
+            source_records=[source],
+            confidence=0.9,
+            raw_record=raw_record,
+            require_account_tail=account_tail_expected,
         )
+        if bank_key == "icbc" and source_type == "email_attachment_pdf_reviewed":
+            transaction_card = _first_value(row, "交易卡号")
+            transaction["card_type"] = "信用卡" if transaction_card else "借记卡"
+            if transaction_card:
+                transaction["transaction_card_tail"] = _account_tail_from_text(transaction_card)
+        elif bank_key in {"bocom", "ccb", "ceb"} and source_type == "email_attachment_pdf_reviewed":
+            transaction["card_type"] = "借记卡"
+        transactions.append(transaction)
     return transactions
 
 
@@ -961,10 +1049,10 @@ def _account_full_from_lines(lines: list[str]) -> str:
 
 
 def _direction_from_cn(value: str) -> str:
-    text = (value or "").strip()
-    if "收入" in text or text == "收":
+    text = (value or "").strip().upper()
+    if "收入" in text or text in {"收", "C", "贷"}:
         return "inflow"
-    if "支出" in text or text == "支":
+    if "支出" in text or text in {"支", "D", "借"}:
         return "outflow"
     return "unknown"
 

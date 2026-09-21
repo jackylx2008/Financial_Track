@@ -116,6 +116,10 @@ class OrderDocumentReaderTests(unittest.TestCase):
 
         self.assertIn("购物订单完整人工审核集", html)
         self.assertIn("实付金额", html)
+        self.assertIn('id="warningFilter"', html)
+        self.assertIn('<option value="yes">有告警</option>', html)
+        self.assertIn('<option value="no">无告警</option>', html)
+        self.assertIn("warning==='yes'?r.warnings.length>0", html)
         self.assertIn("/open-source", html)
         self.assertIn("示例商品", html)
 

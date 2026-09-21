@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from flows.modules.pdf_hash_registry import sync_pdf_hash_registry
+from flows.modules.pdf_hash_registry import load_pdf_hash_registry, sync_pdf_hash_registry
 
 
 logger = logging.getLogger(__name__)
@@ -184,6 +184,21 @@ def read_cached_pdf_text(path: Path, project_root: Path | None = None) -> str | 
         logger.warning("Cached PDF parser text hash mismatch: %s", cache_path)
         return None
     return parser_text
+
+
+def read_reviewed_pdf_pages(path: Path, project_root: Path | None = None) -> list[dict[str, Any]] | None:
+    """Return cached table pages only when this exact PDF hash passed human review."""
+    root = (project_root or Path(__file__).resolve().parents[2]).resolve()
+    digest = sha256_file(path)
+    review_dir = root / DEFAULT_CACHE_ROOT.parent
+    registry = load_pdf_hash_registry(review_dir)
+    entry = registry.get("documents", {}).get(digest, {})
+    if entry.get("ocr_status") != "passed":
+        return None
+    cached = _read_valid_cache(review_dir / "cache" / f"{digest}.json", digest)
+    if cached is None or not isinstance(cached.get("pages"), list):
+        return None
+    return cached["pages"]
 
 
 def sha256_file(path: Path) -> str:
