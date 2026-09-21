@@ -38,13 +38,22 @@ class PdfOcrReviewDataTests(unittest.TestCase):
         self.assertEqual(recognized_font_size(2.0), 10)
 
     def test_ctrl_left_drag_moves_both_canvases_by_same_fraction(self) -> None:
-        left = horizontal_drag_fraction(0.2, press_x=500, current_x=400, content_width=1000)
-        right = horizontal_drag_fraction(0.4, press_x=500, current_x=400, content_width=1000)
+        left = horizontal_drag_fraction(0.2, previous_x=500, current_x=400, content_width=1000)
+        right = horizontal_drag_fraction(0.4, previous_x=500, current_x=400, content_width=1000)
 
         self.assertAlmostEqual(left, 0.3)
         self.assertAlmostEqual(right, 0.5)
         self.assertEqual(horizontal_drag_fraction(0.0, 100, 300, 1000), 0.0)
         self.assertEqual(horizontal_drag_fraction(0.95, 300, 100, 1000), 1.0)
+
+    def test_other_canvas_keeps_moving_after_one_reaches_edge(self) -> None:
+        at_right_edge = horizontal_drag_fraction(1.0, 500, 400, 1000)
+        still_moving = horizontal_drag_fraction(0.5, 500, 400, 1000)
+        reversing_from_edge = horizontal_drag_fraction(at_right_edge, 400, 450, 1000)
+
+        self.assertEqual(at_right_edge, 1.0)
+        self.assertAlmostEqual(still_moving, 0.6)
+        self.assertAlmostEqual(reversing_from_edge, 0.95)
 
     def test_loads_bocom_document_and_its_cached_pages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

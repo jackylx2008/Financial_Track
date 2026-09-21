@@ -40,14 +40,14 @@ def recognized_font_size(vertical_scale: float) -> int:
 
 def horizontal_drag_fraction(
     start_fraction: float,
-    press_x: int,
+    previous_x: int,
     current_x: int,
     content_width: int,
 ) -> float:
     """Translate a pointer drag into a clamped horizontal canvas position."""
     if content_width <= 0:
         return max(0.0, min(1.0, start_fraction))
-    delta = (press_x - current_x) / content_width
+    delta = (previous_x - current_x) / content_width
     return max(0.0, min(1.0, start_fraction + delta))
 
 
@@ -396,10 +396,8 @@ class PdfOcrReviewApp:
             self.left_content_width if event.widget is self.left_canvas else self.right_content_width
         )
         self._horizontal_drag = {
-            "press_x": int(event.x_root),
+            "last_x": int(event.x_root),
             "content_width": active_width,
-            "left_start": self.left_canvas.xview()[0],
-            "right_start": self.right_canvas.xview()[0],
         }
         self.left_canvas.configure(cursor="fleur")
         self.right_canvas.configure(cursor="fleur")
@@ -408,17 +406,18 @@ class PdfOcrReviewApp:
     def _drag_horizontally(self, event: tk.Event[Any]) -> str:
         if self._horizontal_drag is None:
             return "break"
-        press_x = int(self._horizontal_drag["press_x"])
+        last_x = int(self._horizontal_drag["last_x"])
         content_width = int(self._horizontal_drag["content_width"])
         current_x = int(event.x_root)
         left = horizontal_drag_fraction(
-            float(self._horizontal_drag["left_start"]), press_x, current_x, content_width
+            self.left_canvas.xview()[0], last_x, current_x, content_width
         )
         right = horizontal_drag_fraction(
-            float(self._horizontal_drag["right_start"]), press_x, current_x, content_width
+            self.right_canvas.xview()[0], last_x, current_x, content_width
         )
         self.left_canvas.xview_moveto(left)
         self.right_canvas.xview_moveto(right)
+        self._horizontal_drag["last_x"] = current_x
         return "break"
 
     def _finish_horizontal_drag(self, _event: tk.Event[Any]) -> str:
