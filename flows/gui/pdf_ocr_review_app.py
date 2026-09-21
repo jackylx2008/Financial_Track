@@ -22,6 +22,15 @@ logger = logging.getLogger(__name__)
 ZOOM_VALUES = (100, 125, 150, 175, 200)
 
 
+def next_zoom_level(current: int, direction: int) -> int:
+    """Return the adjacent configured zoom level, clamped at both ends."""
+    if direction == 0:
+        return min(ZOOM_VALUES, key=lambda value: abs(value - current))
+    index = min(range(len(ZOOM_VALUES)), key=lambda item: abs(ZOOM_VALUES[item] - current))
+    index = max(0, min(len(ZOOM_VALUES) - 1, index + (1 if direction > 0 else -1)))
+    return ZOOM_VALUES[index]
+
+
 class PdfOcrReviewApp:
     def __init__(self, root: tk.Tk, project_root: Path) -> None:
         self.root = root
@@ -102,15 +111,15 @@ class PdfOcrReviewApp:
         self.page_box.bind("<<ComboboxSelected>>", lambda _: self._select_page_number())
         ttk.Label(pagebar, text="缩放").pack(side="left")
         self.zoom_var = tk.IntVar(value=125)
-        zoom_box = ttk.Combobox(
+        self.zoom_box = ttk.Combobox(
             pagebar,
             textvariable=self.zoom_var,
             state="readonly",
             width=7,
             values=ZOOM_VALUES,
         )
-        zoom_box.pack(side="left", padx=(4, 12))
-        zoom_box.bind("<<ComboboxSelected>>", lambda _: self.render_page())
+        self.zoom_box.pack(side="left", padx=(4, 12))
+        self.zoom_box.bind("<<ComboboxSelected>>", lambda _: self.render_page())
         self.status_var = tk.StringVar()
         ttk.Label(pagebar, textvariable=self.status_var, style="Status.TLabel").pack(side="left", fill="x", expand=True)
 
@@ -143,6 +152,9 @@ class PdfOcrReviewApp:
             widget.bind("<MouseWheel>", self._on_mousewheel)
             widget.bind("<Button-4>", self._on_mousewheel)
             widget.bind("<Button-5>", self._on_mousewheel)
+            widget.bind("<Control-MouseWheel>", self._on_ctrl_mousewheel)
+            widget.bind("<Control-Button-4>", self._on_ctrl_mousewheel)
+            widget.bind("<Control-Button-5>", self._on_ctrl_mousewheel)
 
         review = ttk.LabelFrame(shell, text="本页人工审核结论", padding=8)
         review.pack(fill="x", pady=(8, 0))
@@ -308,6 +320,33 @@ class PdfOcrReviewApp:
         self.left_canvas.yview_scroll(units, "units")
         self.right_canvas.yview_scroll(units, "units")
         self.vertical_scrollbar.set(*self.left_canvas.yview())
+        return "break"
+
+    def _on_ctrl_mousewheel(self, event: tk.Event[Any]) -> str:
+        if getattr(event, "num", None) == 4:
+            direction = 1
+        elif getattr(event, "num", None) == 5:
+            direction = -1
+        else:
+            direction = 1 if event.delta > 0 else -1 if event.delta < 0 else 0
+        target = next_zoom_level(self.zoom_var.get(), direction)
+        if target == self.zoom_var.get():
+            return "break"
+
+        vertical_position = self.left_canvas.yview()[0]
+        left_horizontal = self.left_canvas.xview()[0]
+        right_horizontal = self.right_canvas.xview()[0]
+        self.zoom_var.set(target)
+        self.render_page()
+        self.left_canvas.yview_moveto(vertical_position)
+        self.right_canvas.yview_moveto(vertical_position)
+        self.left_canvas.xview_moveto(left_horizontal)
+        self.right_canvas.xview_moveto(right_horizontal)
+        self.vertical_scrollbar.set(*self.left_canvas.yview())
+        self.status_var.set(
+            f"第 {self.page_index + 1}/{len(self.pages)} 页 · 缩放 {target}% · "
+            f"OCR {self.document.get('ocr_status', 'unknown')}"
+        )
         return "break"
 
     def _select_page_number(self) -> None:
