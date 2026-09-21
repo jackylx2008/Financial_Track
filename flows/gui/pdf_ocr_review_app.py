@@ -38,6 +38,19 @@ def recognized_font_size(vertical_scale: float) -> int:
     return max(8, min(10, int(5 * vertical_scale) + 2))
 
 
+def horizontal_drag_fraction(
+    start_fraction: float,
+    press_x: int,
+    current_x: int,
+    content_width: int,
+) -> float:
+    """Translate a pointer drag into a clamped horizontal canvas position."""
+    if content_width <= 0:
+        return max(0.0, min(1.0, start_fraction))
+    delta = (press_x - current_x) / content_width
+    return max(0.0, min(1.0, start_fraction + delta))
+
+
 class PdfOcrReviewApp:
     def __init__(self, root: tk.Tk, project_root: Path) -> None:
         self.root = root
@@ -57,6 +70,9 @@ class PdfOcrReviewApp:
         self.pdf_photo: Any | None = None
         self.crop: dict[str, Any] = {"left_ratio": 0.0, "right_ratio": 1.0, "method": "pending"}
         self.crop_was_cached = False
+        self.left_content_width = 1
+        self.right_content_width = 1
+        self._horizontal_drag: dict[str, float | int] | None = None
         self._syncing_scroll = False
 
         self.root.title("PDF 原页与识别数据人工审核")
@@ -165,6 +181,9 @@ class PdfOcrReviewApp:
             widget.bind("<Control-MouseWheel>", self._on_ctrl_mousewheel)
             widget.bind("<Control-Button-4>", self._on_ctrl_mousewheel)
             widget.bind("<Control-Button-5>", self._on_ctrl_mousewheel)
+            widget.bind("<Control-ButtonPress-1>", self._start_horizontal_drag)
+            widget.bind("<Control-B1-Motion>", self._drag_horizontally)
+            widget.bind("<Control-ButtonRelease-1>", self._finish_horizontal_drag)
 
         review = ttk.LabelFrame(shell, text="本页人工审核结论", padding=8)
         review.pack(fill="x", pady=(8, 0))
@@ -249,7 +268,8 @@ class PdfOcrReviewApp:
 
         self.left_canvas.delete("all")
         self.left_canvas.create_image(12, 12, anchor="nw", image=self.pdf_photo)
-        self.left_canvas.configure(scrollregion=(0, 0, width + 24, height + 24))
+        self.left_content_width = width + 24
+        self.left_canvas.configure(scrollregion=(0, 0, self.left_content_width, height + 24))
         self._draw_recognized_page(self.pages[self.page_index], width, height, scale, clip.x0)
         self.left_canvas.yview_moveto(0)
         self.right_canvas.yview_moveto(0)
@@ -269,6 +289,7 @@ class PdfOcrReviewApp:
         canvas.delete("all")
         horizontal_scale = scale * 1.65
         recognized_width = int(width * 1.65)
+        self.right_content_width = recognized_width + 24
         canvas.create_rectangle(12, 12, recognized_width + 12, height + 12, fill="white", outline="#9aa8b4")
         tables = page.get("tables", [])
         if not tables:
@@ -281,7 +302,7 @@ class PdfOcrReviewApp:
             )
         for table in tables:
             self._draw_table(canvas, table, horizontal_scale, scale, crop_left, page)
-        canvas.configure(scrollregion=(0, 0, recognized_width + 24, height + 24))
+        canvas.configure(scrollregion=(0, 0, self.right_content_width, height + 24))
 
     def _draw_table(
         self,
@@ -368,6 +389,42 @@ class PdfOcrReviewApp:
         self.right_canvas.xview_moveto(right_horizontal)
         self.vertical_scrollbar.set(*self.left_canvas.yview())
         self._update_status()
+        return "break"
+
+    def _start_horizontal_drag(self, event: tk.Event[Any]) -> str:
+        active_width = (
+            self.left_content_width if event.widget is self.left_canvas else self.right_content_width
+        )
+        self._horizontal_drag = {
+            "press_x": int(event.x_root),
+            "content_width": active_width,
+            "left_start": self.left_canvas.xview()[0],
+            "right_start": self.right_canvas.xview()[0],
+        }
+        self.left_canvas.configure(cursor="fleur")
+        self.right_canvas.configure(cursor="fleur")
+        return "break"
+
+    def _drag_horizontally(self, event: tk.Event[Any]) -> str:
+        if self._horizontal_drag is None:
+            return "break"
+        press_x = int(self._horizontal_drag["press_x"])
+        content_width = int(self._horizontal_drag["content_width"])
+        current_x = int(event.x_root)
+        left = horizontal_drag_fraction(
+            float(self._horizontal_drag["left_start"]), press_x, current_x, content_width
+        )
+        right = horizontal_drag_fraction(
+            float(self._horizontal_drag["right_start"]), press_x, current_x, content_width
+        )
+        self.left_canvas.xview_moveto(left)
+        self.right_canvas.xview_moveto(right)
+        return "break"
+
+    def _finish_horizontal_drag(self, _event: tk.Event[Any]) -> str:
+        self._horizontal_drag = None
+        self.left_canvas.configure(cursor="")
+        self.right_canvas.configure(cursor="")
         return "break"
 
     def _select_page_number(self) -> None:

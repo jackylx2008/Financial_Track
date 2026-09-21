@@ -15,7 +15,12 @@ from flows.modules.pdf_ocr_review_data import (
     save_manual_review,
     sha256_file,
 )
-from flows.gui.pdf_ocr_review_app import DEFAULT_ZOOM, next_zoom_level, recognized_font_size
+from flows.gui.pdf_ocr_review_app import (
+    DEFAULT_ZOOM,
+    horizontal_drag_fraction,
+    next_zoom_level,
+    recognized_font_size,
+)
 
 
 class PdfOcrReviewDataTests(unittest.TestCase):
@@ -31,6 +36,15 @@ class PdfOcrReviewDataTests(unittest.TestCase):
         self.assertEqual(recognized_font_size(1.25), 8)
         self.assertEqual(recognized_font_size(1.75), 10)
         self.assertEqual(recognized_font_size(2.0), 10)
+
+    def test_ctrl_left_drag_moves_both_canvases_by_same_fraction(self) -> None:
+        left = horizontal_drag_fraction(0.2, press_x=500, current_x=400, content_width=1000)
+        right = horizontal_drag_fraction(0.4, press_x=500, current_x=400, content_width=1000)
+
+        self.assertAlmostEqual(left, 0.3)
+        self.assertAlmostEqual(right, 0.5)
+        self.assertEqual(horizontal_drag_fraction(0.0, 100, 300, 1000), 0.0)
+        self.assertEqual(horizontal_drag_fraction(0.95, 300, 100, 1000), 1.0)
 
     def test_loads_bocom_document_and_its_cached_pages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
