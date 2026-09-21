@@ -517,7 +517,7 @@ processed_data/normalized/email_normalization_unresolved.json
 交易卡尾号、主/副卡、交易/入账日期、方向、精确金额、币种、统一后的商户/对方全名、对方账号、
 未脱敏摘要、渠道和来源定位。银行归一化记录不再保存“交易类型”；工行借记卡的序号、地区代码仅保留在
 `raw_record` 原始行中，不映射为归一化字段或渠道。对方账号按账单原文保存，包括中间四位为星号的账号。
-页面支持上述字段、日期范围及金额区间筛选；账户全名不再显示。通过 GUI 的“打开审核 HTML”进入页面后，来源
+页面支持上述字段、日期范围、金额区间及“有告警/无告警”筛选；账户全名不再显示。通过 GUI 的“打开审核 HTML”进入页面后，来源
 PDF、Excel、CSV 或邮件文件可以点击并交给本机默认程序打开；本地桥接只监听回环地址，使用随机会话令牌，
 且只允许访问项目 `raw_data/` 下的文件。
 来源链接不使用浏览器的 `file://` 导航，而是由 Windows 系统注册的 `open` 文件关联打开；同一流水会分别列出
@@ -604,6 +604,16 @@ Windows 下可直接双击根目录批处理文件：
 
 批处理使用项目相对路径，不依赖当前盘符或 CloudStation 的绝对目录；审核 HTML 尚未生成时会显示提示，
 不会打开备份目录中的旧页面。
+
+macOS 下可双击对应的 `.command` 文件：
+
+- `open_bank_review.command` 打开银行流水审核页。
+- `open_consumption_review.command` 同时打开美团/拼多多/京东订单审核页和包含淘宝流水的支付审核页。
+
+macOS 脚本根据自身所在目录定位项目，不写死 Windows 的 `D:\CloudStation` 或 macOS 的
+`~/SynologyDrive/`。因此项目在不同系统使用不同 CloudStation 目录名称时无需修改脚本。
+如果首次双击被 macOS 拒绝执行，可在项目根目录运行一次
+`chmod +x open_bank_review.command open_consumption_review.command`。
 
 当前完整审核页是独立于银行流水审核页的购物订单审核集。本轮实测读取拼多多截图 147 张、
 美团截图 292 张以及京东 PDF 45 份（152 页），由 2,590 条页面级候选合并为 2,380 条：

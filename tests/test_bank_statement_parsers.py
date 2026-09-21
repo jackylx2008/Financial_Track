@@ -551,6 +551,7 @@ class FilteringAndReviewTests(unittest.TestCase):
 
         self.assertEqual(result["transactions"], 1)
         for filter_id in (
+            "warningFilter",
             "institutionFilter",
             "tailFilter",
             "dateFrom",
@@ -565,6 +566,9 @@ class FilteringAndReviewTests(unittest.TestCase):
             "sourceFilter",
         ):
             self.assertIn(f'id="{filter_id}"', html)
+        self.assertIn('<option value="yes">有告警</option>', html)
+        self.assertIn('<option value="no">无告警</option>', html)
+        self.assertIn("warning==='yes'?row.warnings.length>0", html)
         self.assertNotIn(">月份<", html)
         self.assertNotIn(">账户全名<", html)
         self.assertIn("建设银行借记卡", html)
