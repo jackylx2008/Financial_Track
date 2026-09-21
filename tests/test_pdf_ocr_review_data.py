@@ -17,6 +17,7 @@ from flows.modules.pdf_ocr_review_data import (
 )
 from flows.gui.pdf_ocr_review_app import (
     DEFAULT_ZOOM,
+    PdfOcrReviewApp,
     horizontal_drag_fraction,
     next_zoom_level,
     recognized_font_size,
@@ -24,6 +25,23 @@ from flows.gui.pdf_ocr_review_app import (
 
 
 class PdfOcrReviewDataTests(unittest.TestCase):
+    def test_confirm_button_marks_current_page_approved_and_saves(self) -> None:
+        class ReviewStatus:
+            value = "pending"
+
+            def set(self, value: str) -> None:
+                self.value = value
+
+        app = object.__new__(PdfOcrReviewApp)
+        app.review_status_var = ReviewStatus()
+        saved: list[bool] = []
+        app.save_review = lambda: saved.append(True)
+
+        app.approve_current_page()
+
+        self.assertEqual(app.review_status_var.value, "approved")
+        self.assertEqual(saved, [True])
+
     def test_ctrl_wheel_zoom_steps_are_clamped(self) -> None:
         self.assertEqual(DEFAULT_ZOOM, 175)
         self.assertEqual(next_zoom_level(125, 1), 150)

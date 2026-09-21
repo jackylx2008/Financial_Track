@@ -550,6 +550,7 @@ python pdf_ocr_review_app.py
 `pdf_ocr_crop_positions.local.json`，同一文件以后直接复用，不重复 OCR；内容变化导致哈希变化时才重新识别。
 该本地缓存已加入 Git 忽略规则，不提交到仓库。
 也可以选择任意已有缓存的 PDF。每页可标记“待审核”“一致”或“存在问题”并填写备注，结论独立保存到：
+“确认通过”按钮会把当前页直接标记为“一致”并立即保存；不会自动跳转到下一页。
 
 ```text
 processed_data/pdf_html_review/pdf_ocr_manual_review.json

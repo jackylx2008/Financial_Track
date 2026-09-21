@@ -194,7 +194,12 @@ class PdfOcrReviewApp:
         ttk.Label(review, text="备注").grid(row=0, column=3, padx=(18, 4))
         self.note_var = tk.StringVar()
         ttk.Entry(review, textvariable=self.note_var).grid(row=0, column=4, sticky="ew")
-        ttk.Button(review, text="保存本页结论", command=self.save_review).grid(row=0, column=5, padx=(8, 0))
+        ttk.Button(review, text="确认通过", command=self.approve_current_page).grid(
+            row=0, column=5, padx=(8, 0)
+        )
+        ttk.Button(review, text="保存本页结论", command=self.save_review).grid(
+            row=0, column=6, padx=(8, 0)
+        )
         review.columnconfigure(4, weight=1)
 
     def _refresh_document_choices(self, preferred_index: int | None = None) -> None:
@@ -462,6 +467,10 @@ class PdfOcrReviewApp:
             note=self.note_var.get(),
         )
         self.status_var.set(f"本页结论已保存：{self._status_label(entry['status'])} · {entry['updated_at']}")
+
+    def approve_current_page(self) -> None:
+        self.review_status_var.set("approved")
+        self.save_review()
 
     def _load_review_state(self) -> None:
         key = review_key(str(self.document.get("sha256", "")), self.page_index + 1)
