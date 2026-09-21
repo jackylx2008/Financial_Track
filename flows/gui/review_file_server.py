@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
 import secrets
 import subprocess
@@ -65,11 +64,27 @@ def resolve_allowed_source(value: str, allowed_root: Path) -> Path:
 def open_with_default_application(path: Path) -> None:
     system = platform.system()
     if system == "Windows":
-        os.startfile(str(path))  # type: ignore[attr-defined]
+        _open_with_windows_file_association(path)
     elif system == "Darwin":
         subprocess.Popen(["open", str(path)])
     else:
         subprocess.Popen(["xdg-open", str(path)])
+
+
+def _open_with_windows_file_association(path: Path) -> None:
+    """Ask Windows Shell to run the registered ``open`` verb for this exact file."""
+    import ctypes
+
+    result = ctypes.windll.shell32.ShellExecuteW(  # type: ignore[attr-defined]
+        None,
+        "open",
+        str(path),
+        None,
+        str(path.parent),
+        1,
+    )
+    if int(result) <= 32:
+        raise OSError(f"Windows 默认程序打开失败（ShellExecuteW 错误码 {int(result)}）：{path}")
 
 
 def _handler_factory(

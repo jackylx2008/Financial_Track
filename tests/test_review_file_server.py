@@ -3,15 +3,46 @@ from __future__ import annotations
 import tempfile
 import unittest
 import json
+import ctypes
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import urlopen
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from flows.gui.review_file_server import ReviewFileServer, resolve_allowed_source
+from flows.gui.review_file_server import (
+    ReviewFileServer,
+    _open_with_windows_file_association,
+    resolve_allowed_source,
+)
 
 
 class ReviewFileServerTests(unittest.TestCase):
+    def test_windows_opener_uses_registered_open_verb(self) -> None:
+        shell32 = MagicMock()
+        shell32.ShellExecuteW.return_value = 33
+        with patch.object(ctypes, "windll", create=True) as windll:
+            windll.shell32 = shell32
+            source = Path(r"C:\sample\statement.pdf")
+
+            _open_with_windows_file_association(source)
+
+        shell32.ShellExecuteW.assert_called_once_with(
+            None,
+            "open",
+            str(source),
+            None,
+            str(source.parent),
+            1,
+        )
+
+    def test_windows_opener_reports_missing_file_association(self) -> None:
+        shell32 = MagicMock()
+        shell32.ShellExecuteW.return_value = 31
+        with patch.object(ctypes, "windll", create=True) as windll:
+            windll.shell32 = shell32
+            with self.assertRaisesRegex(OSError, "错误码 31"):
+                _open_with_windows_file_association(Path(r"C:\sample\message.eml"))
+
     def test_allows_existing_file_below_raw_data(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "raw_data"

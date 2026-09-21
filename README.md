@@ -516,6 +516,8 @@ processed_data/normalized/email_normalization_unresolved.json
 页面支持上述字段、日期范围及金额区间筛选；账户全名不再显示。通过 GUI 的“打开审核 HTML”进入页面后，来源
 PDF、Excel、CSV 或邮件文件可以点击并交给本机默认程序打开；本地桥接只监听回环地址，使用随机会话令牌，
 且只允许访问项目 `raw_data/` 下的文件。
+来源链接不使用浏览器的 `file://` 导航，而是由 Windows 系统注册的 `open` 文件关联打开；同一流水会分别列出
+原始 PDF/Excel 附件、EML 邮件、图片和解析来源。必须从 GUI 打开审核 HTML 才能使用该本机桥接。
 完整审核集含个人财务信息，只能保存在被 Git 忽略的 `processed_data/` 中。
 
 每个原始数据源行、PDF 页/行、Excel/CSV 行或邮件候选均保存独立的 `source_record_sha256`；每条银行、

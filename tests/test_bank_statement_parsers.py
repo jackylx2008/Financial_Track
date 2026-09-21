@@ -530,6 +530,21 @@ class FilteringAndReviewTests(unittest.TestCase):
             "source_records": [{"source_type": "email_attachment_xlsx", "source_file": "statement.xlsx", "row": 5}],
         }
         with tempfile.TemporaryDirectory() as directory:
+            source_root = Path(directory)
+            parsed = source_root / "statement.xlsx"
+            attachment = source_root / "statement.pdf"
+            email = source_root / "message.eml"
+            for source in (parsed, attachment, email):
+                source.write_bytes(b"sample")
+            transaction["source_records"] = [
+                {
+                    "source_type": "email_attachment_xlsx",
+                    "source_file": str(parsed),
+                    "original_attachment_file": str(attachment),
+                    "email_source_file": str(email),
+                    "row": 5,
+                }
+            ]
             path = Path(directory) / "full-review.html"
             result = write_full_review_html([transaction], path)
             html = path.read_text(encoding="utf-8")
@@ -563,6 +578,10 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn("5200.25", html)
         self.assertIn('value="5000-10000"', html)
         self.assertIn("row.source_locations", html)
+        self.assertIn("原始附件：statement.pdf", html)
+        self.assertIn("原始邮件：message.eml", html)
+        self.assertIn("link.href='#'", html)
+        self.assertNotIn("link.href=item.uri", html)
 
     def test_known_debit_banks_are_not_inferred_as_credit_cards(self) -> None:
         transactions = [
