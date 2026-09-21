@@ -594,6 +594,17 @@ processed_data/normalized/normalized_quality_report.md
 `orders_full_review.html` 支持平台、日期、金额区间、商户、商品和状态筛选，
 在 GUI“交易归一”页可直接打开，并可调用本机默认程序打开原始 PDF 或截图。
 
+### 根目录人工审核快捷入口
+
+Windows 下可直接双击根目录批处理文件：
+
+- `open_bank_review.bat` 打开 `bank_transactions_full_review.html` 银行流水审核页。
+- `open_consumption_review.bat` 同时打开 `orders_full_review.html`（美团、拼多多、京东）和
+  `payment_transactions_full_review.html`（淘宝 CSV 流水所在审核页）。
+
+批处理使用项目相对路径，不依赖当前盘符或 CloudStation 的绝对目录；审核 HTML 尚未生成时会显示提示，
+不会打开备份目录中的旧页面。
+
 当前完整审核页是独立于银行流水审核页的购物订单审核集。本轮实测读取拼多多截图 147 张、
 美团截图 292 张以及京东 PDF 45 份（152 页），由 2,590 条页面级候选合并为 2,380 条：
 拼多多 438 条、美团 1,155 条、京东 787 条。所有审核记录均保存归一化指纹和原始来源
