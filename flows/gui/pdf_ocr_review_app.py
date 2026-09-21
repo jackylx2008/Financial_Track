@@ -20,6 +20,7 @@ from flows.modules.pdf_ocr_review_data import (
 
 logger = logging.getLogger(__name__)
 ZOOM_VALUES = (100, 125, 150, 175, 200)
+DEFAULT_ZOOM = 175
 
 
 def next_zoom_level(current: int, direction: int) -> int:
@@ -29,6 +30,11 @@ def next_zoom_level(current: int, direction: int) -> int:
     index = min(range(len(ZOOM_VALUES)), key=lambda item: abs(ZOOM_VALUES[item] - current))
     index = max(0, min(len(ZOOM_VALUES) - 1, index + (1 if direction > 0 else -1)))
     return ZOOM_VALUES[index]
+
+
+def recognized_font_size(vertical_scale: float) -> int:
+    """Use a font two points larger than the original recognized-table scale."""
+    return max(8, min(10, int(5 * vertical_scale) + 2))
 
 
 class PdfOcrReviewApp:
@@ -110,7 +116,7 @@ class PdfOcrReviewApp:
         self.page_box.pack(side="left", padx=(4, 12))
         self.page_box.bind("<<ComboboxSelected>>", lambda _: self._select_page_number())
         ttk.Label(pagebar, text="缩放").pack(side="left")
-        self.zoom_var = tk.IntVar(value=125)
+        self.zoom_var = tk.IntVar(value=DEFAULT_ZOOM)
         self.zoom_box = ttk.Combobox(
             pagebar,
             textvariable=self.zoom_var,
@@ -284,7 +290,7 @@ class PdfOcrReviewApp:
             widths = [1.0] * columns
         total_width = sum(widths)
         row_height = max(1.0, (y1 - y0) / len(rows))
-        font_size = max(6, min(8, int(5 * vertical_scale)))
+        font_size = recognized_font_size(vertical_scale)
         for row_index, row in enumerate(rows):
             top = y0 + row_index * row_height
             bottom = y0 + (row_index + 1) * row_height

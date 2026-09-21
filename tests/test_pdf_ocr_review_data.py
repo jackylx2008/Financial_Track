@@ -15,15 +15,22 @@ from flows.modules.pdf_ocr_review_data import (
     save_manual_review,
     sha256_file,
 )
-from flows.gui.pdf_ocr_review_app import next_zoom_level
+from flows.gui.pdf_ocr_review_app import DEFAULT_ZOOM, next_zoom_level, recognized_font_size
 
 
 class PdfOcrReviewDataTests(unittest.TestCase):
     def test_ctrl_wheel_zoom_steps_are_clamped(self) -> None:
+        self.assertEqual(DEFAULT_ZOOM, 175)
         self.assertEqual(next_zoom_level(125, 1), 150)
         self.assertEqual(next_zoom_level(125, -1), 100)
         self.assertEqual(next_zoom_level(200, 1), 200)
         self.assertEqual(next_zoom_level(100, -1), 100)
+
+    def test_recognized_table_font_is_two_points_larger(self) -> None:
+        self.assertEqual(recognized_font_size(1.0), 8)
+        self.assertEqual(recognized_font_size(1.25), 8)
+        self.assertEqual(recognized_font_size(1.75), 10)
+        self.assertEqual(recognized_font_size(2.0), 10)
 
     def test_loads_bocom_document_and_its_cached_pages(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
