@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -53,7 +54,9 @@ def _review_row(transaction: dict[str, Any]) -> dict[str, Any]:
         "amount_value": _float_value(transaction.get("amount")),
         "currency": str(transaction.get("currency") or "—"),
         "account_tail": _account_tail_display(transaction),
-        "transaction_card_tail": str(transaction.get("transaction_card_tail") or "—"),
+        "transaction_card_tail": str(
+            transaction.get("transaction_card_tail") or transaction.get("account_tail") or "—"
+        ),
         "card_role": str(transaction.get("card_role") or "—"),
         "merchant": merchant,
         "counterparty_account": counterparty_account,
@@ -186,25 +189,83 @@ def _source_location(source: dict[str, Any]) -> str:
 def _all_source_links(source_records: list[dict[str, Any]]) -> list[dict[str, str]]:
     links: list[dict[str, str]] = []
     seen: set[str] = set()
-    fields = (
-        ("source_file", "来源文件"),
-        ("original_attachment_file", "原始附件"),
+    supporting_fields = (
         ("email_source_file", "原始邮件"),
         ("source_image", "原始图片"),
         ("body_text_file", "邮件正文"),
     )
     for source in source_records:
-        for field, label in fields:
+        original = _existing_source_path(source.get("original_attachment_file"))
+        preferred = _existing_source_path(source.get("source_file"))
+        preferred_linked = False
+        if preferred is not None:
+            preferred_suffix = preferred.suffix.casefold()
+            if preferred_suffix == ".zip":
+                pass
+            elif preferred_suffix != ".pdf" or _pdf_is_password_free(str(preferred)):
+                if preferred_suffix == ".pdf":
+                    label = "免密PDF"
+                elif original is not None and original.suffix.casefold() == ".zip":
+                    label = "解压文件"
+                else:
+                    label = "来源文件"
+                preferred_linked = _append_source_link(links, seen, preferred, label, source)
+
+        if original is not None and original != preferred:
+            suffix = original.suffix.casefold()
+            # 附件提取后的 source_file 才是供人工审核的副本。不要再把其加密
+            # PDF/ZIP 原件暴露为可点击链接，否则系统默认程序会再次询问密码。
+            has_review_copy = preferred_linked or (preferred is not None and suffix == ".zip")
+            password_protected_pdf = suffix == ".pdf" and not _pdf_is_password_free(str(original))
+            if suffix != ".zip" and not has_review_copy and not password_protected_pdf:
+                _append_source_link(links, seen, original, "原始附件", source)
+
+        for field, label in supporting_fields:
             value = str(source.get(field) or "")
             if not value:
                 continue
-            path = Path(value).expanduser().resolve()
-            key = str(path).casefold()
-            if key in seen or not path.is_file():
-                continue
-            seen.add(key)
-            links.append(_source_link(path, label, source))
+            path = _existing_source_path(value)
+            if path is not None:
+                _append_source_link(links, seen, path, label, source)
     return links
+
+
+def _existing_source_path(value: Any) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    path = Path(text).expanduser().resolve()
+    return path if path.is_file() else None
+
+
+def _append_source_link(
+    links: list[dict[str, str]],
+    seen: set[str],
+    path: Path,
+    label: str,
+    source: dict[str, Any],
+) -> bool:
+    key = str(path).casefold()
+    if key in seen:
+        return False
+    seen.add(key)
+    links.append(_source_link(path, label, source))
+    return True
+
+
+@lru_cache(maxsize=None)
+def _pdf_is_password_free(path_text: str) -> bool:
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(path_text)
+        if reader.is_encrypted:
+            return False
+        if reader.pages:
+            _ = reader.pages[0].mediabox
+        return True
+    except Exception:
+        return False
 
 
 def _source_link(path: Path, kind: str, source: dict[str, Any]) -> dict[str, str]:
@@ -269,12 +330,12 @@ HTML_TEMPLATE = r'''<!doctype html>
 <div class="filter"><label for="sourceFilter">来源</label><select id="sourceFilter"><option value="">全部来源</option></select></div>
 </section>
 <div class="pager"><button id="prev">上一页</button><button id="next">下一页</button><label>每页 <select id="pageSize"><option>100</option><option selected>250</option><option>500</option><option>1000</option></select> 条</label><span class="pager-info" id="pageInfo"></span></div>
-<div class="table-wrap"><table><thead><tr><th style="width:45px">#</th><th style="width:145px">机构/卡片类型</th><th style="width:75px">账户尾号</th><th style="width:80px">交易卡尾号</th><th style="width:65px">主/副卡</th><th style="width:145px">交易日期</th><th style="width:95px">入账日期</th><th style="width:65px">方向</th><th style="width:105px">交易金额</th><th style="width:70px">币种</th><th style="width:220px">商户/对方全名</th><th style="width:180px">对方账号</th><th style="width:235px">摘要</th><th style="width:105px">渠道</th><th style="width:250px">来源定位/其他</th></tr></thead><tbody id="body"></tbody></table><div id="empty" class="empty" hidden>没有符合筛选条件的交易。</div></div>
+<div class="table-wrap"><table><thead><tr><th style="width:45px">#</th><th style="width:145px">机构/卡片类型</th><th style="width:75px">账户尾号</th><th style="width:80px">卡号后4位</th><th style="width:65px">主/副卡</th><th style="width:145px">交易日期</th><th style="width:95px">入账日期</th><th style="width:65px">方向</th><th style="width:105px">交易金额</th><th style="width:70px">币种</th><th style="width:220px">商户/对方全名</th><th style="width:180px">对方账号</th><th style="width:235px">摘要</th><th style="width:105px">渠道</th><th style="width:250px">来源定位/其他</th></tr></thead><tbody id="body"></tbody></table><div id="empty" class="empty" hidden>没有符合筛选条件的交易。</div></div>
 </main><script id="reviewData" type="application/json">__REVIEW_DATA__</script><script>
 const data=JSON.parse(document.getElementById('reviewData').textContent),$=id=>document.getElementById(id);let page=1,filtered=[];const directionLabel={inflow:'收入',outflow:'支出',unknown:'未知'};$('subtitle').textContent=`生成时间：${data.generated_at} · 离线文件 · 共 ${data.record_count.toLocaleString()} 条`;$('total').textContent=data.record_count.toLocaleString();$('institutionCount').textContent=data.institutions.length;$('warningCount').textContent=data.rows.filter(row=>row.warnings.length).length.toLocaleString();
 function addOptions(id,values){values.forEach(value=>{const option=document.createElement('option');option.value=value;option.textContent=value;$(id).append(option)})}addOptions('institutionFilter',data.institutions);addOptions('currencyFilter',data.currencies);addOptions('sourceFilter',data.sources);
 function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text??'—');if(className)el.className=className;return el}function amountMatches(value,range){if(!range)return true;if(value===null)return false;if(range==='40000+')return value>=40000;const [low,high]=range.split('-').map(Number);return value>=low&&value<high}function textIncludes(value,query){return String(value||'').toLowerCase().includes(query)}
-function applyFilters(){const query=$('search').value.trim().toLowerCase(),warning=$('warningFilter').value,institution=$('institutionFilter').value,tail=$('tailFilter').value.trim(),dateFrom=$('dateFrom').value,dateTo=$('dateTo').value,direction=$('directionFilter').value,amount=$('amountFilter').value,currency=$('currencyFilter').value,merchant=$('merchantFilter').value.trim().toLowerCase(),account=$('accountFilter').value.trim().toLowerCase(),summary=$('summaryFilter').value.trim().toLowerCase(),channel=$('channelFilter').value.trim().toLowerCase(),source=$('sourceFilter').value;filtered=data.rows.filter(row=>{const date=(row.transaction_time==='—'?row.posting_date:row.transaction_time).slice(0,10);return(!query||JSON.stringify(row).toLowerCase().includes(query))&&(!warning||(warning==='yes'?row.warnings.length>0:row.warnings.length===0))&&(!institution||row.institution===institution)&&(!tail||textIncludes(row.account_tail,tail))&&(!dateFrom||date>=dateFrom)&&(!dateTo||date<=dateTo)&&(!direction||row.direction===direction)&&amountMatches(row.amount_value,amount)&&(!currency||row.currency===currency)&&(!merchant||textIncludes(row.merchant,merchant))&&(!account||textIncludes(row.counterparty_account,account))&&(!summary||textIncludes(row.summary,summary))&&(!channel||textIncludes(row.channel,channel))&&(!source||row.source_types.includes(source))});page=1;render()}
+function applyFilters(){const query=$('search').value.trim().toLowerCase(),warning=$('warningFilter').value,institution=$('institutionFilter').value,tail=$('tailFilter').value.trim(),dateFrom=$('dateFrom').value,dateTo=$('dateTo').value,direction=$('directionFilter').value,amount=$('amountFilter').value,currency=$('currencyFilter').value,merchant=$('merchantFilter').value.trim().toLowerCase(),account=$('accountFilter').value.trim().toLowerCase(),summary=$('summaryFilter').value.trim().toLowerCase(),channel=$('channelFilter').value.trim().toLowerCase(),source=$('sourceFilter').value;filtered=data.rows.filter(row=>{const date=(row.transaction_time==='—'?row.posting_date:row.transaction_time).slice(0,10),tailMatches=!tail||textIncludes(row.account_tail,tail)||textIncludes(row.transaction_card_tail,tail);return(!query||JSON.stringify(row).toLowerCase().includes(query))&&(!warning||(warning==='yes'?row.warnings.length>0:row.warnings.length===0))&&(!institution||row.institution===institution)&&tailMatches&&(!dateFrom||date>=dateFrom)&&(!dateTo||date<=dateTo)&&(!direction||row.direction===direction)&&amountMatches(row.amount_value,amount)&&(!currency||row.currency===currency)&&(!merchant||textIncludes(row.merchant,merchant))&&(!account||textIncludes(row.counterparty_account,account))&&(!summary||textIncludes(row.summary,summary))&&(!channel||textIncludes(row.channel,channel))&&(!source||row.source_types.includes(source))});page=1;render()}
 async function openSource(event,link,status){event.preventDefault();if(location.protocol!=='http:'&&location.protocol!=='https:'){status.textContent='请从 GUI 打开审核页后再打开来源文件';return}status.textContent='正在调用 Windows 默认程序…';try{const url=new URL('/open-source',location.origin);url.searchParams.set('path',link.dataset.path);url.searchParams.set('token',new URLSearchParams(location.search).get('token')||'');const response=await fetch(url);const result=await response.json();if(!response.ok)throw new Error(result.error||'打开失败');status.textContent='已交给 Windows 默认程序';}catch(error){status.textContent=`打开失败：${error.message}`}}
 function appendCell(tr,value,className){tr.append(node('td',value||'—',className))}function render(){const size=Number($('pageSize').value),pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages);const start=(page-1)*size,rows=filtered.slice(start,start+size),body=$('body');body.replaceChildren();rows.forEach((row,index)=>{const tr=node('tr');appendCell(tr,start+index+1);appendCell(tr,row.institution);appendCell(tr,row.account_tail);appendCell(tr,row.transaction_card_tail);appendCell(tr,row.card_role);appendCell(tr,row.transaction_time);appendCell(tr,row.posting_date);const dir=node('td'),badge=node('span',directionLabel[row.direction]||'未知',`badge ${row.direction||'unknown'}`);dir.append(badge);tr.append(dir);appendCell(tr,row.amount,'money');appendCell(tr,row.currency);appendCell(tr,row.merchant);appendCell(tr,row.counterparty_account);appendCell(tr,row.summary,'summary');appendCell(tr,row.channel);const other=node('td',undefined,'extra'),details=node('details'),detailTitle=node('summary',`定位 ${row.source_locations.length} 处 · 置信度 ${(row.confidence*100).toFixed(0)}%`),content=node('div',[`流水 SHA-256：${row.flow_hash_sha256||'—'}`,`归一化指纹：${row.record_fingerprint_sha256||'—'}`,`来源行 SHA-256：${row.source_record_hashes.join('、')||'—'}`,`来源：${row.source_types.join('、')||'—'}`,`余额：${row.balance}`,`参考号：${row.reference}`].join('\n')),status=node('div','', 'open-status');details.append(detailTitle,content);row.source_links.forEach(item=>{const link=node('a',`打开：${item.label}`,'source-link');link.href='#';link.dataset.path=item.path;link.addEventListener('click',event=>openSource(event,link,status));details.append(link)});details.append(status);other.append(details);if(row.warnings.length)other.append(node('div',row.warnings.join('；'),'warnings'));tr.append(other);body.append(tr)});$('filtered').textContent=filtered.length.toLocaleString();$('pageInfo').textContent=`第 ${page} / ${pages} 页，显示 ${rows.length} 条，共 ${filtered.length.toLocaleString()} 条`;$('prev').disabled=page<=1;$('next').disabled=page>=pages;$('empty').hidden=filtered.length!==0}
 ['search','warningFilter','institutionFilter','tailFilter','dateFrom','dateTo','directionFilter','amountFilter','currencyFilter','merchantFilter','accountFilter','summaryFilter','channelFilter','sourceFilter'].forEach(id=>$(id).addEventListener($(id).tagName==='INPUT'?'input':'change',applyFilters));$('pageSize').addEventListener('change',()=>{page=1;render()});$('prev').addEventListener('click',()=>{if(page>1){page--;render()}});$('next').addEventListener('click',()=>{const pages=Math.ceil(filtered.length/Number($('pageSize').value));if(page<pages){page++;render()}});applyFilters();

@@ -45,6 +45,9 @@ def dedupe_transactions(transactions: list[dict[str, Any]]) -> tuple[list[dict[s
 
 
 def _dedupe_key(transaction: dict[str, Any]) -> str:
+    statement_row_key = _authoritative_statement_row_key(transaction)
+    if statement_row_key:
+        return statement_row_key
     credit_line_key = _icbc_credit_card_line_key(transaction)
     if credit_line_key:
         return credit_line_key
@@ -66,6 +69,25 @@ def _dedupe_key(transaction: dict[str, Any]) -> str:
             party[:40],
         ]
     )
+
+
+def _authoritative_statement_row_key(transaction: dict[str, Any]) -> str:
+    """Treat each row in an official CEB Excel statement as one transaction."""
+    if transaction.get("bank_key") != "ceb":
+        return ""
+    for source in transaction.get("source_records", []):
+        if source.get("source_type") != "standalone_bank_xls" or not source.get("row"):
+            continue
+        return "|".join(
+            [
+                "authoritative_statement_row",
+                "ceb",
+                str(source.get("source_file", "")),
+                str(source.get("sheet", "")),
+                str(source.get("row", "")),
+            ]
+        )
+    return ""
 
 
 def _icbc_credit_card_line_key(transaction: dict[str, Any]) -> str:
@@ -136,6 +158,12 @@ def _merge_cross_source_icbc_statements(
         merged["transaction_card_tail"] = transaction_card_tail
         merged["merged_raw_records"] = [candidate.get("raw_record"), anchor.get("raw_record")]
         ignored_warnings = {
+            # The reviewed printed flow and monthly EML describe the same ICBC
+            # transaction from different viewpoints.  PDF line wrapping and
+            # EML merchant/channel wording are complementary provenance, not
+            # transaction conflicts.
+            "conflict_merchant",
+            "conflict_counterparty",
             "conflict_transaction_time",
             "conflict_posting_date",
             "conflict_summary",

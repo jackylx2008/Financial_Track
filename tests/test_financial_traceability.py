@@ -101,6 +101,50 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(len(records[0]["source_records"]), 2)
         self.assertTrue(records[0]["transaction_id"].startswith("bank_tx_"))
 
+    def test_ceb_official_excel_rows_are_distinct_even_when_event_fields_match(self) -> None:
+        common = {
+            "bank_key": "ceb",
+            "bank_name": "光大银行",
+            "transaction_time": "2016-08-03 07:31:07",
+            "direction": "inflow",
+            "amount": "50000.00",
+            "counterparty": "示例金融服务有限公司",
+        }
+        first = make_transaction(
+            **common,
+            balance="51005.95",
+            summary="网银跨行汇款REF001",
+            source_records=[
+                {
+                    "source_type": "standalone_bank_xls",
+                    "source_file": "ceb.xls",
+                    "sheet": "Sheet1",
+                    "row": 450,
+                }
+            ],
+            require_account_tail=False,
+        )
+        second = make_transaction(
+            **common,
+            balance="101005.95",
+            summary="网银跨行汇款REF002",
+            source_records=[
+                {
+                    "source_type": "standalone_bank_xls",
+                    "source_file": "ceb.xls",
+                    "sheet": "Sheet1",
+                    "row": 451,
+                }
+            ],
+            require_account_tail=False,
+        )
+
+        records, stats = dedupe_transactions([first, second])
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(stats["duplicates_merged"], 0)
+        self.assertTrue(all(not record["warnings"] for record in records))
+
     def test_icbc_shared_credit_cards_merge_identical_statement_lines(self) -> None:
         common = {
             "bank_key": "icbc",
@@ -199,7 +243,8 @@ class FinancialTraceabilityTests(unittest.TestCase):
             posting_date="2026-08-01",
             direction="outflow",
             amount="88.50",
-            merchant="示例商户",
+            merchant="示例商 户",
+            counterparty="示例商 户",
             summary="消费",
             source_records=[{"source_type": "email_attachment_pdf", "source_file": "flow.pdf"}],
             raw_record={"line": "12:30:00 6225970000005670 借 人民币 88.50 人民币 88.50 -88.50 消费 示例商户"},
@@ -211,7 +256,9 @@ class FinancialTraceabilityTests(unittest.TestCase):
             posting_date="2026-08-01",
             direction="outflow",
             amount="88.50",
+            account_tail="5670",
             merchant="示例商户",
+            counterparty="示例渠道商户",
             summary="5670 2026-08-01 2026-08-01 消费 示例商户 88.50/RMB 88.50/RMB(支出)",
             source_records=[{"source_type": "email_body", "source_file": "monthly.eml"}],
             raw_record={"raw_line": "5670 2026-08-01 2026-08-01 消费 示例商户 88.50/RMB 88.50/RMB(支出)"},
@@ -226,6 +273,8 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(records[0]["card_role"], "主卡")
         self.assertEqual(records[0]["transaction_card_tail"], "5670")
         self.assertEqual(len(records[0]["source_records"]), 2)
+        self.assertNotIn("conflict_merchant", records[0]["warnings"])
+        self.assertNotIn("conflict_counterparty", records[0]["warnings"])
 
         rerun, rerun_stats = dedupe_transactions(records)
         self.assertEqual(len(rerun), 1)

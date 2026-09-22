@@ -709,7 +709,10 @@ def _read_generic_bank_rows(
         "招商银行": "cmb",
         "光大银行": "ceb",
     }.get(str(manifest_item.get("bank_name", "")).strip(), bank_key)
-    account_tail_expected = not (bank_key == "ceb" and source_type == "standalone_bank_xls")
+    account_tail_expected = not (
+        (bank_key == "ceb" and source_type == "standalone_bank_xls")
+        or (bank_key == "bocom" and source_type == "email_attachment_pdf_reviewed")
+    )
     for offset, row in enumerate(rows):
         transaction_time = _first_value(row, "交易时间", "交易日期", "交易日", "发生时间", "记账时间")
         separate_date = _first_value(row, "交易日期", "交易日")

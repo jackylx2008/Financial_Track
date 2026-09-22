@@ -205,9 +205,16 @@ def _apply_icbc_statement_fields(
 ) -> None:
     details = prefix_match.group("details")
     detail_match = ICBC_STATEMENT_DETAILS_RE.match(details)
+    card_tail = prefix_match.group("tail")
     result["transaction_time"] = prefix_match.group("transaction_date")
     result["posting_date"] = prefix_match.group("posting_date")
-    result["transaction_card_tail"] = prefix_match.group("tail")
+    # ICBC monthly EML statements identify every row by the last four digits of
+    # the actual main/supplementary card.  Keep that identity in both the
+    # generic account field and the card-specific field so email-only rows are
+    # traceable and cannot be merged across cards merely because the date,
+    # merchant and amount happen to match.
+    result["account_tail"] = card_tail
+    result["transaction_card_tail"] = card_tail
     result["card_type"] = "信用卡"
     result["card_role"] = card_role
     result["parser"] = "icbc_credit_card_statement_v1"

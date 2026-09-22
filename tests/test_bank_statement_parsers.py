@@ -130,10 +130,26 @@ CN
         by_tail = {row["transaction_card_tail"]: row for row in rows}
         self.assertEqual(by_tail["5670"]["card_role"], "主卡")
         self.assertEqual(by_tail["6943"]["card_role"], "副卡")
+        self.assertEqual(by_tail["5670"]["account_tail"], "5670")
+        self.assertEqual(by_tail["6943"]["account_tail"], "6943")
         self.assertEqual(by_tail["5670"]["posting_date"], "2026-08-02")
         self.assertEqual(by_tail["5670"]["merchant"], "示例主卡商户")
         self.assertNotIn("transaction_type", by_tail["5670"])
         self.assertTrue(all(row["card_type"] == "信用卡" for row in rows))
+
+    def test_icbc_monthly_statement_keeps_same_value_transactions_on_different_cards(self) -> None:
+        text = """中国工商银行信用卡对账单
+---主卡明细---
+2997 2024-09-20 2024-09-20 跨行消费 Suica Charge 5,000.00/JPY 249.31/RMB(支出)
+---副卡明细---
+3348 2024-09-20 2024-09-20 跨行消费 Suica Charge 5,000.00/JPY 249.31/RMB(支出)
+"""
+
+        rows = parse_bank_email("icbc", text, "2024-10-01T09:00:00+08:00")
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual({row["account_tail"] for row in rows}, {"2997", "3348"})
+        self.assertEqual({row["card_role"] for row in rows}, {"主卡", "副卡"})
 
 
 class AttachmentParserTests(unittest.TestCase):
@@ -230,6 +246,7 @@ class AttachmentParserTests(unittest.TestCase):
         self.assertEqual(rows[0]["direction"], "outflow")
         self.assertEqual(rows[0]["amount"], "88.50")
         self.assertEqual(rows[0]["source_records"][0]["page"], 3)
+        self.assertNotIn("missing_account_tail", rows[0]["warnings"])
 
     def test_human_approved_icbc_credit_pdf_uses_trading_place_as_merchant(self) -> None:
         pages = [
@@ -683,7 +700,7 @@ class FilteringAndReviewTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source_root = Path(directory)
             parsed = source_root / "statement.xlsx"
-            attachment = source_root / "statement.pdf"
+            attachment = source_root / "statement.zip"
             email = source_root / "message.eml"
             for source in (parsed, attachment, email):
                 source.write_bytes(b"sample")
@@ -727,16 +744,58 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn("6227000000005678", html)
         self.assertIn("商户/对方全名", html)
         self.assertIn("对方账号", html)
+        self.assertIn("卡号后4位", html)
+        self.assertIn("textIncludes(row.transaction_card_tail,tail)", html)
         self.assertNotIn("交易类型", html)
         self.assertIn("openSource", html)
         self.assertIn("完整且不脱敏的交易摘要", html)
         self.assertIn("5200.25", html)
         self.assertIn('value="5000-10000"', html)
         self.assertIn("row.source_locations", html)
-        self.assertIn("原始附件：statement.pdf", html)
+        self.assertIn("解压文件：statement.xlsx", html)
+        self.assertNotIn("原始附件：statement.zip", html)
         self.assertIn("原始邮件：message.eml", html)
         self.assertIn("link.href='#'", html)
         self.assertNotIn("link.href=item.uri", html)
+
+    def test_full_review_prefers_password_free_pdf_over_encrypted_original(self) -> None:
+        from pypdf import PdfWriter
+
+        with tempfile.TemporaryDirectory() as directory:
+            source_root = Path(directory)
+            decrypted = source_root / "statement_decrypted.pdf"
+            encrypted = source_root / "statement_original.pdf"
+            writer = PdfWriter()
+            writer.add_blank_page(width=100, height=100)
+            with decrypted.open("wb") as file:
+                writer.write(file)
+            writer = PdfWriter()
+            writer.add_blank_page(width=100, height=100)
+            writer.encrypt("123456")
+            with encrypted.open("wb") as file:
+                writer.write(file)
+            transaction = {
+                "transaction_id": "tx-pdf",
+                "bank_key": "icbc",
+                "bank_name": "工商银行",
+                "transaction_time": "2026-09-01",
+                "direction": "outflow",
+                "amount": "1.00",
+                "source_records": [
+                    {
+                        "source_type": "email_attachment_pdf",
+                        "source_file": str(decrypted),
+                        "original_attachment_file": str(encrypted),
+                        "page": 1,
+                    }
+                ],
+            }
+            path = source_root / "full-review.html"
+            write_full_review_html([transaction], path)
+            html = path.read_text(encoding="utf-8")
+
+        self.assertIn("免密PDF：statement_decrypted.pdf", html)
+        self.assertNotIn("statement_original.pdf", html)
 
     def test_known_debit_banks_are_not_inferred_as_credit_cards(self) -> None:
         transactions = [
