@@ -43,6 +43,7 @@ def build_quality_report(
         f"- 过滤非交易记录数：{filter_stats.get('rejected', 0)}",
         f"- 去重后流水数：{len(transactions)}",
         f"- 合并重复数：{dedupe_stats.get('duplicates_merged', 0)}",
+        f"- 因余额不同而分别保留数：{dedupe_stats.get('balance_distinct_records_preserved', 0)}",
         f"- 共享额度信用卡跨卡合并数：{dedupe_stats.get('shared_credit_card_duplicates_merged', 0)}",
         f"- 工行月账单与打印流水匹配数：{dedupe_stats.get('icbc_statement_transactions_matched', 0)}",
         f"- 信用卡还款跨来源合并数：{dedupe_stats.get('cross_source_credit_card_repayments_merged', 0)}",

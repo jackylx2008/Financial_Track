@@ -685,6 +685,7 @@ class FilteringAndReviewTests(unittest.TestCase):
             "currency": "CNY",
             "account_full_name": "6217000010195331270",
             "account_tail": "1234",
+            "card_role": "主卡",
             "merchant": "完整商户名称",
             "counterparty": "完整交易对方",
             "counterparty_account": "6227000000005678",
@@ -721,6 +722,7 @@ class FilteringAndReviewTests(unittest.TestCase):
         for filter_id in (
             "warningFilter",
             "institutionFilter",
+            "cardRoleFilter",
             "tailFilter",
             "dateFrom",
             "dateTo",
@@ -737,6 +739,8 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn('<option value="yes">有告警</option>', html)
         self.assertIn('<option value="no">无告警</option>', html)
         self.assertIn("warning==='yes'?row.warnings.length>0", html)
+        self.assertIn('"card_roles":["主卡"]', html)
+        self.assertIn("row.card_role===cardRole", html)
         self.assertNotIn(">月份<", html)
         self.assertNotIn(">账户全名<", html)
         self.assertIn("建设银行借记卡", html)
@@ -750,6 +754,10 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn("openSource", html)
         self.assertIn("完整且不脱敏的交易摘要", html)
         self.assertIn("5200.25", html)
+        self.assertIn("当前筛选金额汇总", html)
+        self.assertIn("收入金额", html)
+        self.assertIn("支出金额", html)
+        self.assertIn("renderSummary()", html)
         self.assertIn('value="5000-10000"', html)
         self.assertIn("row.source_locations", html)
         self.assertIn("解压文件：statement.xlsx", html)

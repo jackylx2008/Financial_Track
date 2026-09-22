@@ -145,6 +145,35 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(stats["duplicates_merged"], 0)
         self.assertTrue(all(not record["warnings"] for record in records))
 
+    def test_same_bank_event_with_different_balances_is_not_a_duplicate(self) -> None:
+        common = {
+            "bank_key": "icbc",
+            "bank_name": "工商银行",
+            "account_tail": "1234",
+            "transaction_time": "2018-09-25 10:20:30",
+            "direction": "inflow",
+            "amount": "83.00",
+            "counterparty": "示例交易对方",
+            "summary": "示例摘要",
+        }
+        first = make_transaction(
+            **common,
+            balance="1083.00",
+            source_records=[{"source_type": "email_attachment_pdf_reviewed", "page": 6, "row": 17}],
+        )
+        second = make_transaction(
+            **common,
+            balance="1166.00",
+            source_records=[{"source_type": "email_attachment_pdf_reviewed", "page": 6, "row": 18}],
+        )
+
+        records, stats = dedupe_transactions([first, second])
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual({record["balance"] for record in records}, {"1083.00", "1166.00"})
+        self.assertEqual(stats["duplicates_merged"], 0)
+        self.assertEqual(stats["balance_distinct_records_preserved"], 1)
+
     def test_icbc_shared_credit_cards_merge_identical_statement_lines(self) -> None:
         common = {
             "bank_key": "icbc",
@@ -243,6 +272,7 @@ class FinancialTraceabilityTests(unittest.TestCase):
             posting_date="2026-08-01",
             direction="outflow",
             amount="88.50",
+            balance="911.50",
             merchant="示例商 户",
             counterparty="示例商 户",
             summary="消费",
@@ -256,6 +286,7 @@ class FinancialTraceabilityTests(unittest.TestCase):
             posting_date="2026-08-01",
             direction="outflow",
             amount="88.50",
+            balance="88.50",
             account_tail="5670",
             merchant="示例商户",
             counterparty="示例渠道商户",

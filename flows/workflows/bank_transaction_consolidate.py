@@ -130,6 +130,7 @@ def run(
         "standalone_bank_files": standalone_stats["files_seen"],
         "filtered_transactions": len(filtered_transactions),
         "rejected_non_transactions": filter_stats["rejected"],
+        "dedupe_stats": dedupe_stats,
         "jsonl": str(jsonl_path),
         "json": str(json_path),
         "quality_report": str(report_path),

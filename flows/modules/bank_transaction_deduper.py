@@ -2,27 +2,40 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from flows.modules.bank_transaction_schema import normalize_text_key, stable_transaction_id
 
 
 def dedupe_transactions(transactions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    by_key: dict[str, dict[str, Any]] = {}
+    by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     duplicate_count = 0
     shared_credit_card_duplicates = 0
+    balance_distinct_records_preserved = 0
     for transaction in transactions:
         key = _dedupe_key(transaction)
-        if key in by_key:
+        bucket = by_key[key]
+        match_index = next(
+            (
+                index
+                for index, existing in enumerate(bucket)
+                if not _balances_are_distinct(existing, transaction)
+            ),
+            None,
+        )
+        if match_index is not None:
             duplicate_count += 1
             if key.startswith("icbc_credit_line|") and (
-                by_key[key].get("account_tail") != transaction.get("account_tail")
+                bucket[match_index].get("account_tail") != transaction.get("account_tail")
             ):
                 shared_credit_card_duplicates += 1
-            by_key[key] = _merge_transactions(by_key[key], transaction)
+            bucket[match_index] = _merge_transactions(bucket[match_index], transaction)
         else:
-            by_key[key] = transaction
-    deduped = list(by_key.values())
+            if bucket:
+                balance_distinct_records_preserved += 1
+            bucket.append(transaction)
+    deduped = [transaction for bucket in by_key.values() for transaction in bucket]
     statement_matches = 0
     cross_source_repayments = 0
     while True:
@@ -38,10 +51,22 @@ def dedupe_transactions(transactions: list[dict[str, Any]]) -> tuple[list[dict[s
     return deduped, {
         "duplicates_merged": duplicate_count,
         "shared_credit_card_duplicates_merged": shared_credit_card_duplicates,
+        "balance_distinct_records_preserved": balance_distinct_records_preserved,
         "icbc_statement_transactions_matched": statement_matches,
         "cross_source_credit_card_repayments_merged": cross_source_repayments,
         "dedupe_keys": len(deduped),
     }
+
+
+def _balances_are_distinct(first: dict[str, Any], second: dict[str, Any]) -> bool:
+    first_balance = str(first.get("balance") or "").strip()
+    second_balance = str(second.get("balance") or "").strip()
+    if not first_balance or not second_balance:
+        return False
+    try:
+        return Decimal(first_balance.replace(",", "")) != Decimal(second_balance.replace(",", ""))
+    except InvalidOperation:
+        return normalize_text_key(first_balance) != normalize_text_key(second_balance)
 
 
 def _dedupe_key(transaction: dict[str, Any]) -> str:
