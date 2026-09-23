@@ -22,6 +22,14 @@ class ConfigLoaderTests(unittest.TestCase):
             config["bank_transaction_review"]["credit_card_refund_window_days"],
             31,
         )
+        self.assertEqual(
+            config["bank_transaction_review"]["partial_refund_max_difference"],
+            200,
+        )
+        self.assertEqual(
+            config["bank_transaction_review"]["partial_refund_max_difference_ratio"],
+            0.05,
+        )
 
     def test_existing_environment_value_has_priority_over_common_env(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -76,6 +76,9 @@ def _dedupe_key(transaction: dict[str, Any]) -> str:
     statement_row_key = _authoritative_statement_row_key(transaction)
     if statement_row_key:
         return statement_row_key
+    email_statement_row_key = _icbc_email_statement_row_key(transaction)
+    if email_statement_row_key:
+        return email_statement_row_key
     credit_line_key = _icbc_credit_card_line_key(transaction)
     if credit_line_key:
         return credit_line_key
@@ -113,6 +116,26 @@ def _authoritative_statement_row_key(transaction: dict[str, Any]) -> str:
                 str(source.get("source_file", "")),
                 str(source.get("sheet", "")),
                 str(source.get("row", "")),
+            ]
+        )
+    return ""
+
+
+def _icbc_email_statement_row_key(transaction: dict[str, Any]) -> str:
+    """Preserve the occurrence count of rows in an ICBC monthly statement."""
+    if transaction.get("bank_key") != "icbc":
+        return ""
+    raw_record = transaction.get("raw_record")
+    if not isinstance(raw_record, dict) or raw_record.get("parser") != "icbc_credit_card_statement_v1":
+        return ""
+    for source in transaction.get("source_records", []):
+        if source.get("source_type") != "email_body" or not source.get("candidate_index"):
+            continue
+        return "|".join(
+            [
+                "icbc_email_statement_row",
+                str(source.get("source_file", "")),
+                str(source.get("candidate_index", "")),
             ]
         )
     return ""
@@ -174,6 +197,10 @@ def _merge_cross_source_icbc_statements(
             }
         )
         candidates = [(index, transactions[index]) for index in candidate_indexes]
+        candidates = _match_icbc_posting_amount(anchor, candidates)
+        ordered_statement_match = bool(_icbc_email_statement_row_key(anchor))
+        if len(candidates) > 1 and ordered_statement_match:
+            candidates = [min(candidates, key=_icbc_candidate_order)]
         if len(candidates) != 1:
             candidate_indexes = sorted(
                 {
@@ -191,6 +218,9 @@ def _merge_cross_source_icbc_statements(
                 }
             )
             candidates = [(index, transactions[index]) for index in candidate_indexes]
+            candidates = _match_icbc_posting_amount(anchor, candidates)
+            if len(candidates) > 1 and ordered_statement_match:
+                candidates = [min(candidates, key=_icbc_candidate_order)]
         if len(candidates) != 1:
             continue
         candidate_index, candidate = candidates[0]
@@ -244,8 +274,52 @@ def _merge_cross_source_icbc_statements(
     )
 
 
+def _match_icbc_posting_amount(
+    anchor: dict[str, Any],
+    candidates: list[tuple[int, dict[str, Any]]],
+) -> list[tuple[int, dict[str, Any]]]:
+    anchor_amount = _icbc_posting_amount(anchor)
+    if not anchor_amount:
+        return candidates
+    candidate_amounts = [(_icbc_posting_amount(candidate), index, candidate) for index, candidate in candidates]
+    if not any(amount for amount, _, _ in candidate_amounts):
+        return candidates
+    return [
+        (index, candidate)
+        for amount, index, candidate in candidate_amounts
+        if amount == anchor_amount
+    ]
+
+
+def _icbc_posting_amount(transaction: dict[str, Any]) -> str:
+    raw_record = transaction.get("raw_record")
+    if not isinstance(raw_record, dict):
+        return ""
+    for field in ("入账金额", "记账金额"):
+        value = str(raw_record.get(field) or "").replace(",", "").strip()
+        if re.fullmatch(r"[+-]?\d+(?:\.\d+)?", value):
+            return value
+    raw_line = str(raw_record.get("raw_line") or transaction.get("summary") or "")
+    match = re.search(
+        r"([+-]?[\d,]+(?:\.\d{1,2})?)/[A-Z]{3}\((?:支出|存入)\)\s*$",
+        raw_line,
+        re.IGNORECASE,
+    )
+    return match.group(1).replace(",", "") if match else ""
+
+
+def _icbc_candidate_order(candidate: tuple[int, dict[str, Any]]) -> tuple[str, int, int, int]:
+    index, transaction = candidate
+    sources = transaction.get("source_records", [])
+    page = min((int(item.get("page")) for item in sources if item.get("page")), default=0)
+    row = min((int(item.get("row")) for item in sources if item.get("row")), default=0)
+    return str(transaction.get("transaction_time") or ""), page, row, index
+
+
 def _icbc_email_statement_card_tail(transaction: dict[str, Any]) -> str:
     if transaction.get("bank_key") != "icbc":
+        return ""
+    if transaction.get("cross_source_event"):
         return ""
     source_types = {str(item.get("source_type", "")) for item in transaction.get("source_records", [])}
     if "email_body" not in source_types:

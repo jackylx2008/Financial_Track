@@ -151,6 +151,20 @@ CN
         self.assertEqual({row["account_tail"] for row in rows}, {"2997", "3348"})
         self.assertEqual({row["card_role"] for row in rows}, {"主卡", "副卡"})
 
+    def test_icbc_monthly_statement_preserves_identical_rows_on_same_card(self) -> None:
+        text = """中国工商银行信用卡对账单
+---主卡明细---
+2997 2024-09-20 2024-09-20 跨行消费 Suica Charge 2,000.00/JPY 99.25/RMB(支出)
+2997 2024-09-20 2024-09-20 跨行消费 Suica Charge 2,000.00/JPY 99.25/RMB(支出)
+2997 2024-09-20 2024-09-20 跨行消费 Suica Charge 2,000.00/JPY 99.25/RMB(支出)
+"""
+
+        rows = parse_bank_email("icbc", text, "2024-10-01T09:00:00+08:00")
+
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(all(row["amount"] == "2000.00" for row in rows))
+        self.assertTrue(all(row["transaction_card_tail"] == "2997" for row in rows))
+
     def test_icbc_foreign_statement_keeps_original_currency_and_long_merchant(self) -> None:
         text = """信 用 卡 对 账 单
 ---主卡明细---
@@ -852,6 +866,8 @@ class FilteringAndReviewTests(unittest.TestCase):
             amount: str,
             *,
             card_type: str = "信用卡",
+            merchant: str = "示例商户",
+            summary: str = "消费",
         ) -> dict[str, object]:
             return {
                 "transaction_id": transaction_id,
@@ -864,6 +880,8 @@ class FilteringAndReviewTests(unittest.TestCase):
                 "direction": direction,
                 "amount": amount,
                 "currency": "CNY",
+                "merchant": merchant,
+                "summary": summary,
                 "source_records": [],
             }
 
@@ -874,6 +892,32 @@ class FilteringAndReviewTests(unittest.TestCase):
             transaction("late-refund", "2026-03-10", "inflow", "80.00"),
             transaction("debit-out", "2026-04-01", "outflow", "50.00", card_type="借记卡"),
             transaction("debit-in", "2026-04-02", "inflow", "50.00", card_type="借记卡"),
+            transaction("fee-purchase", "2026-05-28 23:10:10", "outflow", "24896.00", merchant="支付宝-陈桂英"),
+            transaction(
+                "competing-partial-refund",
+                "2026-06-01 12:00:00",
+                "inflow",
+                "13200.00",
+                merchant="支付宝-陈桂英",
+                summary="部分退款",
+            ),
+            transaction(
+                "fee-refund",
+                "2026-06-05 16:47:31",
+                "inflow",
+                "24800.00",
+                merchant="支付宝-陈桂英",
+                summary="退货退款",
+            ),
+            transaction("partial-purchase", "2026-07-01", "outflow", "1000.00", merchant="示例百货"),
+            transaction(
+                "partial-refund",
+                "2026-07-05",
+                "inflow",
+                "600.00",
+                merchant="示例百货",
+                summary="部分退款",
+            ),
         ]
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "full-review.html"
@@ -887,20 +931,53 @@ class FilteringAndReviewTests(unittest.TestCase):
             )
             short_window_html = short_window_path.read_text(encoding="utf-8")
 
+        review_payload = json.loads(
+            html.split('<script id="reviewData" type="application/json">', 1)[1].split(
+                "</script>", 1
+            )[0]
+        )
+        review_rows = {row["id"]: row for row in review_payload["rows"]}
         self.assertEqual(html.count('"is_cancelled_refund":true'), 2)
         self.assertEqual(html.count('"refund_status":"交易取消退款"'), 2)
         self.assertIn("tr.classList.add('cancelled-refund')", html)
         self.assertIn(".cancelled-refund td{background-image:repeating-linear-gradient", html)
+        self.assertIn(".refund-difference td{background-color:#fff5df", html)
+        self.assertIn(
+            ".refund-difference td{background-color:#fff5df;background-image:repeating-linear-gradient",
+            html,
+        )
+        self.assertIn(".partial-refund td{background:#eaf4ff", html)
         self.assertNotIn(".cancelled-refund td::after", html)
         self.assertNotIn("node('s',row.amount", html)
-        self.assertIn("if(!row.is_cancelled_refund)", html)
-        self.assertIn("entry.count+=1;if(!row.is_cancelled_refund)", html)
+        self.assertEqual(html.count('"refund_pair_type":"small_difference"'), 2)
+        self.assertEqual(html.count('"refund_pair_type":"partial"'), 2)
+        self.assertEqual(html.count('"refund_difference":"96.00"'), 2)
+        self.assertIn('"summary_outflow_value":96.0', html)
+        self.assertEqual(review_rows["fee-purchase"]["refund_received_amount"], "24800.00")
+        self.assertEqual(review_rows["fee-refund"]["refund_pair_type"], "small_difference")
+        self.assertFalse(review_rows["competing-partial-refund"]["is_refund_pair"])
+        self.assertIn("原支出 ${row.refund_original_amount} − 退款 ${row.refund_received_amount}", html)
+        self.assertIn("entry.outflow+=Math.round(Math.abs(row.summary_outflow_value||0)*100)", html)
         self.assertIn('"credit_card_refund_window_days":31', html)
+        self.assertIn('"partial_refund_max_difference":200.0', html)
+        self.assertIn('"partial_refund_max_difference_ratio":0.05', html)
         self.assertEqual(short_window_html.count('"is_cancelled_refund":true'), 0)
         self.assertIn('"credit_card_refund_window_days":10', short_window_html)
 
         with self.assertRaisesRegex(ValueError, "必须是正整数"):
             write_full_review_html(transactions, Path("unused.html"), credit_card_refund_window_days=0)
+        with self.assertRaisesRegex(ValueError, "必须是非负数"):
+            write_full_review_html(
+                transactions,
+                Path("unused.html"),
+                partial_refund_max_difference=-1,
+            )
+        with self.assertRaisesRegex(ValueError, "0 到 1"):
+            write_full_review_html(
+                transactions,
+                Path("unused.html"),
+                partial_refund_max_difference_ratio=1.1,
+            )
 
     def test_transaction_place_is_shown_only_for_credit_cards(self) -> None:
         transactions = [

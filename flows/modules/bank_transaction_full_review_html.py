@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -20,10 +21,22 @@ def write_full_review_html(
     *,
     include_date_range: bool = True,
     credit_card_refund_window_days: int | str = 31,
+    partial_refund_max_difference: int | float | str = 200,
+    partial_refund_max_difference_ratio: int | float | str = 0.05,
 ) -> dict[str, Any]:
     refund_window_days = _validate_refund_window_days(credit_card_refund_window_days)
+    max_difference = _validate_nonnegative_decimal(
+        partial_refund_max_difference,
+        "信用卡差额退款最大差额",
+    )
+    max_difference_ratio = _validate_refund_ratio(partial_refund_max_difference_ratio)
     rows = [_review_row(transaction) for transaction in transactions]
-    _mark_credit_card_refund_pairs(rows, refund_window_days)
+    _mark_credit_card_refund_pairs(
+        rows,
+        refund_window_days,
+        max_difference,
+        max_difference_ratio,
+    )
     review_dates = [value for row in rows if (value := _review_date(row))]
     display_title = title
     if include_date_range and review_dates:
@@ -32,6 +45,8 @@ def write_full_review_html(
         "generated_at": datetime.now(BEIJING_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S"),
         "record_count": len(rows),
         "credit_card_refund_window_days": refund_window_days,
+        "partial_refund_max_difference": float(max_difference),
+        "partial_refund_max_difference_ratio": float(max_difference_ratio),
         "institutions": sorted({row["institution"] for row in rows}),
         "card_roles": sorted({row["card_role"] for row in rows if row["card_role"] != "—"}),
         "currencies": sorted({row["currency"] for row in rows}),
@@ -59,6 +74,23 @@ def _validate_refund_window_days(value: int | str) -> int:
     return days
 
 
+def _validate_nonnegative_decimal(value: int | float | str, label: str) -> Decimal:
+    try:
+        result = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"{label}必须是非负数") from exc
+    if not result.is_finite() or result < 0:
+        raise ValueError(f"{label}必须是非负数")
+    return result
+
+
+def _validate_refund_ratio(value: int | float | str) -> Decimal:
+    result = _validate_nonnegative_decimal(value, "信用卡差额退款最大比例")
+    if result > 1:
+        raise ValueError("信用卡差额退款最大比例必须在 0 到 1 之间")
+    return result
+
+
 def _review_date(row: dict[str, Any]) -> str:
     value = str(row.get("transaction_time") or "")
     if value == "—":
@@ -79,8 +111,13 @@ def _review_datetime(row: dict[str, Any]) -> datetime | None:
     return None
 
 
-def _mark_credit_card_refund_pairs(rows: list[dict[str, Any]], window_days: int) -> None:
-    """标记一个月内同卡、同币种、同金额的先支出后退款记录。"""
+def _mark_credit_card_refund_pairs(
+    rows: list[dict[str, Any]],
+    window_days: int,
+    max_difference: Decimal,
+    max_difference_ratio: Decimal,
+) -> None:
+    """标记信用卡全额取消、差额退款和普通部分退款。"""
     pending: dict[tuple[str, str, str, int], list[tuple[datetime, int]]] = {}
     dated_rows = [
         (timestamp, index)
@@ -116,20 +153,142 @@ def _mark_credit_card_refund_pairs(rows: list[dict[str, Any]], window_days: int)
         if not candidates:
             continue
         _, outflow_index = candidates.pop()
-        outflow = rows[outflow_index]
-        pair_id = f"{outflow.get('id') or outflow_index}:{row.get('id') or index}"
-        outflow.update(
-            is_cancelled_refund=True,
-            refund_pair_id=pair_id,
-            refund_pair_role="原支出",
-            refund_status="交易取消退款",
+        _apply_refund_pair(rows, outflow_index, index, "full")
+
+    # 分阶段匹配，避免普通部分退款先占用后续本应属于小额差异退款的原支出。
+    _mark_non_full_refund_pairs(
+        rows,
+        dated_rows,
+        window_days,
+        max_difference,
+        max_difference_ratio,
+        pair_type="small_difference",
+    )
+    _mark_non_full_refund_pairs(
+        rows,
+        dated_rows,
+        window_days,
+        max_difference,
+        max_difference_ratio,
+        pair_type="partial",
+    )
+
+
+def _mark_non_full_refund_pairs(
+    rows: list[dict[str, Any]],
+    dated_rows: list[tuple[datetime, int]],
+    window_days: int,
+    max_difference: Decimal,
+    max_difference_ratio: Decimal,
+    *,
+    pair_type: str,
+) -> None:
+    pending: dict[tuple[str, str, str, str], list[tuple[datetime, int]]] = {}
+    for timestamp, index in sorted(dated_rows, key=lambda item: (item[0], item[1])):
+        row = rows[index]
+        if row.get("is_refund_pair") or row["card_type"] not in {"信用卡", "贷记卡"}:
+            continue
+        amount_cents = _amount_cents(row)
+        card_identity = _refund_card_identity(row)
+        merchant_key = _refund_merchant_key(row)
+        if amount_cents is None or not card_identity or not merchant_key:
+            continue
+        key = (
+            str(row.get("institution") or ""),
+            card_identity,
+            str(row.get("currency") or ""),
+            merchant_key,
         )
-        row.update(
-            is_cancelled_refund=True,
-            refund_pair_id=pair_id,
-            refund_pair_role="退款收入",
-            refund_status="交易取消退款",
+        if row.get("direction") == "outflow":
+            pending.setdefault(key, []).append((timestamp, index))
+            continue
+        if row.get("direction") != "inflow" or not _is_refund_like(row):
+            continue
+        candidates = []
+        for candidate_time, candidate_index in pending.get(key, []):
+            outflow_cents = _amount_cents(rows[candidate_index]) or 0
+            if timestamp - candidate_time > timedelta(days=window_days) or outflow_cents <= amount_cents:
+                continue
+            difference = Decimal(outflow_cents - amount_cents) / 100
+            ratio = difference / (Decimal(outflow_cents) / 100)
+            is_small_difference = difference <= max_difference and ratio <= max_difference_ratio
+            if (pair_type == "small_difference") != is_small_difference:
+                continue
+            candidates.append((outflow_cents - amount_cents, candidate_time, candidate_index))
+        if not candidates:
+            continue
+        # 金额最接近优先；差额相同则选择时间最近的原支出。
+        _, selected_time, outflow_index = min(
+            candidates,
+            key=lambda item: (item[0], -item[1].timestamp()),
         )
+        pending[key].remove((selected_time, outflow_index))
+        _apply_refund_pair(rows, outflow_index, index, pair_type)
+
+
+def _apply_refund_pair(
+    rows: list[dict[str, Any]],
+    outflow_index: int,
+    inflow_index: int,
+    pair_type: str,
+) -> None:
+    outflow = rows[outflow_index]
+    inflow = rows[inflow_index]
+    outflow_cents = _amount_cents(outflow) or 0
+    inflow_cents = _amount_cents(inflow) or 0
+    difference_cents = max(0, outflow_cents - inflow_cents)
+    pair_id = f"{outflow.get('id') or outflow_index}:{inflow.get('id') or inflow_index}"
+    status = {
+        "full": "交易取消退款",
+        "small_difference": "差额退款",
+        "partial": "部分退款（待确认差额性质）",
+    }[pair_type]
+    common = {
+        "is_refund_pair": True,
+        "is_cancelled_refund": pair_type == "full",
+        "refund_pair_id": pair_id,
+        "refund_pair_type": pair_type,
+        "refund_status": status,
+        "refund_original_amount": _format_cents(outflow_cents),
+        "refund_received_amount": _format_cents(inflow_cents),
+        "refund_difference": _format_cents(difference_cents),
+        "refund_difference_value": difference_cents / 100,
+    }
+    outflow.update(common, refund_pair_role="原支出")
+    inflow.update(common, refund_pair_role="退款收入")
+    if pair_type == "full":
+        outflow.update(summary_outflow_value=0, summary_inflow_value=0)
+        inflow.update(summary_outflow_value=0, summary_inflow_value=0)
+    elif pair_type == "small_difference":
+        outflow.update(summary_outflow_value=difference_cents / 100, summary_inflow_value=0)
+        inflow.update(summary_outflow_value=0, summary_inflow_value=0)
+
+
+def _amount_cents(row: dict[str, Any]) -> int | None:
+    value = row.get("amount_value")
+    if value is None:
+        return None
+    return round(abs(float(value)) * 100)
+
+
+def _refund_card_identity(row: dict[str, Any]) -> str:
+    value = str(row.get("transaction_card_tail") or "")
+    if value == "—":
+        value = str(row.get("account_tail") or "")
+    return "" if value == "—" else value
+
+
+def _refund_merchant_key(row: dict[str, Any]) -> str:
+    return re.sub(r"[\W_]+", "", str(row.get("merchant") or "").casefold())
+
+
+def _is_refund_like(row: dict[str, Any]) -> bool:
+    text = " ".join(str(row.get(field) or "") for field in ("summary", "merchant"))
+    return any(term in text for term in ("退款", "退货", "退单", "撤销", "冲正"))
+
+
+def _format_cents(value: int) -> str:
+    return f"{value / 100:.2f}"
 
 
 def _review_row(transaction: dict[str, Any]) -> dict[str, Any]:
@@ -167,10 +326,26 @@ def _review_row(transaction: dict[str, Any]) -> dict[str, Any]:
         "reference": str(transaction.get("transaction_reference") or "—"),
         "confidence": float(transaction.get("confidence", 0)),
         "warnings": [str(item) for item in transaction.get("warnings", [])],
+        "is_refund_pair": False,
         "is_cancelled_refund": False,
         "refund_pair_id": "",
+        "refund_pair_type": "",
         "refund_pair_role": "",
         "refund_status": "",
+        "refund_original_amount": "",
+        "refund_received_amount": "",
+        "refund_difference": "",
+        "refund_difference_value": 0,
+        "summary_inflow_value": (
+            _float_value(transaction.get("amount"))
+            if transaction.get("direction") == "inflow"
+            else 0
+        ),
+        "summary_outflow_value": (
+            _float_value(transaction.get("amount"))
+            if transaction.get("direction") == "outflow"
+            else 0
+        ),
         "source_types": sorted({str(item.get("source_type") or "unknown") for item in source_records}),
         "source_locations": [_source_location(item) for item in source_records],
         "source_links": _all_source_links(source_records),
@@ -434,7 +609,7 @@ def _json_for_script(value: object) -> str:
 HTML_TEMPLATE = r'''<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>__REVIEW_TITLE__</title><style>
-:root{--navy:#17324d;--blue:#245b8f;--line:#d9e1e8;--bg:#f3f6f8;--muted:#667583;--ok:#26734d;--warn:#a15c00;--bad:#a43333}*{box-sizing:border-box}body{margin:0;color:#17212b;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}header{padding:22px 28px;color:white;background:linear-gradient(120deg,var(--navy),var(--blue))}h1{margin:0 0 7px;font-size:25px}header p{margin:0;opacity:.86;font-size:13px}main{padding:16px 20px 26px}.notice{margin:0 0 12px;padding:10px 12px;border-left:4px solid var(--warn);border-radius:6px;background:#fff7e9;color:#704700;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin-bottom:12px}.metric{padding:11px 14px;border:1px solid var(--line);border-radius:9px;background:white}.metric b{display:block;margin-top:2px;color:var(--navy);font-size:21px}.filters{display:grid;grid-template-columns:repeat(6,minmax(130px,1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:9px 9px 0 0;background:white}.filter{min-width:0}.filter.wide{grid-column:span 2}.filter label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px}.filter input,.filter select,.filter button{width:100%;min-height:34px;padding:5px 7px;border:1px solid #b9c6d0;border-radius:6px;background:white;font:inherit;font-size:12px}.filter button{color:#174d7a;cursor:pointer}.filter button.active{border-color:var(--blue);color:white;background:var(--blue)}.pager{display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-top:0;background:#f8fafb}.pager button{padding:5px 11px;border:1px solid #9eb5c7;border-radius:6px;color:#174d7a;background:white;cursor:pointer}.pager button:disabled{opacity:.45;cursor:not-allowed}.pager select{min-height:30px}.pager-info{margin-left:auto;color:var(--muted);font-size:12px}.table-wrap{overflow:auto;border:1px solid var(--line);border-top:0;background:white;max-height:calc(100vh - 400px)}table{width:100%;min-width:1350px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}th{position:sticky;top:0;z-index:2;padding:7px 5px;color:white;background:var(--navy);text-align:left}td{padding:7px 5px;border-right:1px solid #edf1f4;border-bottom:1px solid #e5eaee;vertical-align:top;overflow-wrap:anywhere;white-space:pre-line}tbody tr:hover{background:#f7fbff}.cancelled-refund td{background-image:repeating-linear-gradient(135deg,rgba(164,51,51,.13) 0,rgba(164,51,51,.13) 2px,transparent 2px,transparent 9px);box-shadow:inset 0 0 0 1px rgba(164,51,51,.08)}.badge{display:inline-block;padding:3px 7px;border-radius:999px;font-weight:700}.inflow{color:var(--ok);background:#e7f5ed}.outflow{color:var(--bad);background:#fdeaea}.unknown{color:var(--warn);background:#fff2dd}.money{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}.extra{color:#36566f}.warnings{color:var(--warn)}details summary{cursor:pointer;color:#174d7a}.source-link{display:block;margin-top:5px;color:#075b9d;text-decoration:underline;white-space:normal}.open-status{margin-top:4px;color:var(--ok)}.empty{padding:40px;color:var(--muted);text-align:center}.filtered-summary{margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:9px;background:white}.filtered-summary h2{margin:0 0 4px;color:var(--navy);font-size:18px}.filtered-summary p{margin:0 0 10px;color:var(--muted);font-size:12px}.totals-table{min-width:0;table-layout:auto;font-size:13px}.totals-table th{position:static}.totals-table td{padding:9px}.totals-table .money{font-size:14px}@media(max-width:1100px){.filters{grid-template-columns:repeat(3,1fr)}.table-wrap{max-height:none}}@media print{body{background:#fff}header{color:#17212b;background:#fff}.notice,.filters,.pager{display:none}.table-wrap{max-height:none;overflow:visible;border:0}th{position:static}table{font-size:9px}}
+:root{--navy:#17324d;--blue:#245b8f;--line:#d9e1e8;--bg:#f3f6f8;--muted:#667583;--ok:#26734d;--warn:#a15c00;--bad:#a43333}*{box-sizing:border-box}body{margin:0;color:#17212b;background:var(--bg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}header{padding:22px 28px;color:white;background:linear-gradient(120deg,var(--navy),var(--blue))}h1{margin:0 0 7px;font-size:25px}header p{margin:0;opacity:.86;font-size:13px}main{padding:16px 20px 26px}.notice{margin:0 0 12px;padding:10px 12px;border-left:4px solid var(--warn);border-radius:6px;background:#fff7e9;color:#704700;font-size:13px}.metrics{display:grid;grid-template-columns:repeat(4,minmax(120px,1fr));gap:10px;margin-bottom:12px}.metric{padding:11px 14px;border:1px solid var(--line);border-radius:9px;background:white}.metric b{display:block;margin-top:2px;color:var(--navy);font-size:21px}.filters{display:grid;grid-template-columns:repeat(6,minmax(130px,1fr));gap:8px;padding:10px;border:1px solid var(--line);border-radius:9px 9px 0 0;background:white}.filter{min-width:0}.filter.wide{grid-column:span 2}.filter label{display:block;margin-bottom:3px;color:var(--muted);font-size:11px}.filter input,.filter select,.filter button{width:100%;min-height:34px;padding:5px 7px;border:1px solid #b9c6d0;border-radius:6px;background:white;font:inherit;font-size:12px}.filter button{color:#174d7a;cursor:pointer}.filter button.active{border-color:var(--blue);color:white;background:var(--blue)}.pager{display:flex;gap:8px;align-items:center;padding:8px 10px;border:1px solid var(--line);border-top:0;background:#f8fafb}.pager button{padding:5px 11px;border:1px solid #9eb5c7;border-radius:6px;color:#174d7a;background:white;cursor:pointer}.pager button:disabled{opacity:.45;cursor:not-allowed}.pager select{min-height:30px}.pager-info{margin-left:auto;color:var(--muted);font-size:12px}.table-wrap{overflow:auto;border:1px solid var(--line);border-top:0;background:white;max-height:calc(100vh - 400px)}table{width:100%;min-width:1350px;border-collapse:separate;border-spacing:0;table-layout:fixed;font-size:12px}th{position:sticky;top:0;z-index:2;padding:7px 5px;color:white;background:var(--navy);text-align:left}td{padding:7px 5px;border-right:1px solid #edf1f4;border-bottom:1px solid #e5eaee;vertical-align:top;overflow-wrap:anywhere;white-space:pre-line}tbody tr:hover{background:#f7fbff}.cancelled-refund td{background-image:repeating-linear-gradient(135deg,rgba(164,51,51,.13) 0,rgba(164,51,51,.13) 2px,transparent 2px,transparent 9px);box-shadow:inset 0 0 0 1px rgba(164,51,51,.08)}.refund-difference td{background-color:#fff5df;background-image:repeating-linear-gradient(135deg,rgba(227,163,59,.18) 0,rgba(227,163,59,.18) 2px,transparent 2px,transparent 9px);box-shadow:inset 0 1px 0 #e3a33b,inset 0 -1px 0 #e3a33b}.partial-refund td{background:#eaf4ff;box-shadow:inset 0 1px 0 #6aa4d8,inset 0 -1px 0 #6aa4d8}.refund-note{margin-bottom:5px;padding:4px 6px;border-left:3px solid var(--warn);background:#fff8e8;color:#744800;font-weight:700}.badge{display:inline-block;padding:3px 7px;border-radius:999px;font-weight:700}.inflow{color:var(--ok);background:#e7f5ed}.outflow{color:var(--bad);background:#fdeaea}.unknown{color:var(--warn);background:#fff2dd}.money{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}.extra{color:#36566f}.warnings{color:var(--warn)}details summary{cursor:pointer;color:#174d7a}.source-link{display:block;margin-top:5px;color:#075b9d;text-decoration:underline;white-space:normal}.open-status{margin-top:4px;color:var(--ok)}.empty{padding:40px;color:var(--muted);text-align:center}.filtered-summary{margin-top:14px;padding:14px;border:1px solid var(--line);border-radius:9px;background:white}.filtered-summary h2{margin:0 0 4px;color:var(--navy);font-size:18px}.filtered-summary p{margin:0 0 10px;color:var(--muted);font-size:12px}.totals-table{min-width:0;table-layout:auto;font-size:13px}.totals-table th{position:static}.totals-table td{padding:9px}.totals-table .money{font-size:14px}@media(max-width:1100px){.filters{grid-template-columns:repeat(3,1fr)}.table-wrap{max-height:none}}@media print{body{background:#fff}header{color:#17212b;background:#fff}.notice,.filters,.pager{display:none}.table-wrap{max-height:none;overflow:visible;border:0}th{position:static}table{font-size:9px}}
 </style></head><body><header><h1>__REVIEW_TITLE__</h1><p id="subtitle"></p></header><main>
 <p class="notice">商户/对方全名、对方账号、摘要和渠道保留在全文搜索数据中，不单独占列。通过 GUI 打开本页后，点击来源文件可调用本机默认程序。</p>
 <section class="metrics"><div class="metric">全部交易<b id="total">0</b></div><div class="metric">当前筛选<b id="filtered">0</b></div><div class="metric">机构/卡片类型<b id="institutionCount">0</b></div><div class="metric">有警告记录<b id="warningCount">0</b></div></section>
@@ -456,14 +631,14 @@ HTML_TEMPLATE = r'''<!doctype html>
 </section>
 <div class="pager"><button id="prev">上一页</button><button id="next">下一页</button><label>每页 <select id="pageSize"><option>100</option><option selected>250</option><option>500</option><option>1000</option></select> 条</label><span class="pager-info" id="pageInfo"></span></div>
 <div class="table-wrap"><table><thead><tr><th style="width:45px">#</th><th style="width:145px">机构/卡片类型</th><th style="width:75px">账户尾号</th><th style="width:80px">卡号后4位</th><th style="width:65px">主/副卡</th><th style="width:145px">交易日期</th><th style="width:95px">入账日期</th><th style="width:65px">方向</th><th style="width:105px">交易金额</th><th style="width:70px">币种</th><th style="width:220px">交易场所</th><th style="width:250px">来源定位/其他</th></tr></thead><tbody id="body"></tbody></table><div id="empty" class="empty" hidden>没有符合筛选条件的交易。</div></div>
-<section class="filtered-summary"><h2>当前筛选金额汇总</h2><p>按币种分别统计当前筛选结果的收入和支出，金额单位为对应币种的基本单位。</p><table class="totals-table"><thead><tr><th>币种</th><th>笔数</th><th>收入金额</th><th>支出金额</th></tr></thead><tbody id="summaryBody"></tbody></table></section>
+<section class="filtered-summary"><h2>当前筛选金额汇总</h2><p>金额以对应币种的基本单位展示，并按币种统计净收入和净支出：全额取消不计金额；差额退款只计未退差额；普通部分退款仍分别保留原支出和退款收入。</p><table class="totals-table"><thead><tr><th>币种</th><th>笔数</th><th>收入金额</th><th>支出金额</th></tr></thead><tbody id="summaryBody"></tbody></table></section>
 </main><script id="reviewData" type="application/json">__REVIEW_DATA__</script><script>
 const data=JSON.parse(document.getElementById('reviewData').textContent),$=id=>document.getElementById(id);let page=1,filtered=[],amountDescending=false;const directionLabel={inflow:'收入',outflow:'支出',unknown:'未知'};$('subtitle').textContent=`生成时间：${data.generated_at} · 离线文件 · 共 ${data.record_count.toLocaleString()} 条`;$('total').textContent=data.record_count.toLocaleString();$('institutionCount').textContent=data.institutions.length;$('warningCount').textContent=data.rows.filter(row=>row.warnings.length).length.toLocaleString();
 function addOptions(id,values,labeler=value=>value){values.forEach(value=>{const option=document.createElement('option');option.value=value;option.textContent=labeler(value);$(id).append(option)})}addOptions('institutionFilter',data.institutions);addOptions('cardRoleFilter',data.card_roles);addOptions('yearFilter',data.years,value=>`${value}年`);addOptions('monthFilter',data.months,value=>`${value.slice(0,4)}年${value.slice(5)}月`);addOptions('currencyFilter',data.currencies);addOptions('sourceFilter',data.sources);
 function node(tag,text,className){const el=document.createElement(tag);if(text!==undefined)el.textContent=String(text??'—');if(className)el.className=className;return el}function amountMatches(value,range){if(!range)return true;if(value===null)return false;if(range==='40000+')return value>=40000;const [low,high]=range.split('-').map(Number);return value>=low&&value<high}function textIncludes(value,query){return String(value||'').toLowerCase().includes(query)}
 function applyFilters(){const query=$('search').value.trim().toLowerCase(),warning=$('warningFilter').value,institution=$('institutionFilter').value,cardRole=$('cardRoleFilter').value,tail=$('tailFilter').value.trim(),year=$('yearFilter').value,month=$('monthFilter').value,dateFrom=$('dateFrom').value,dateTo=$('dateTo').value,direction=$('directionFilter').value,amount=$('amountFilter').value,currency=$('currencyFilter').value,source=$('sourceFilter').value;filtered=data.rows.filter(row=>{const date=(row.transaction_time==='—'?row.posting_date:row.transaction_time).slice(0,10),tailMatches=!tail||textIncludes(row.account_tail,tail)||textIncludes(row.transaction_card_tail,tail);return(!query||JSON.stringify(row).toLowerCase().includes(query))&&(!warning||(warning==='yes'?row.warnings.length>0:row.warnings.length===0))&&(!institution||row.institution===institution)&&(!cardRole||row.card_role===cardRole)&&tailMatches&&(!year||date.startsWith(year))&&(!month||date.startsWith(month))&&(!dateFrom||date>=dateFrom)&&(!dateTo||date<=dateTo)&&(!direction||row.direction===direction)&&amountMatches(row.amount_value,amount)&&(!currency||row.currency===currency)&&(!source||row.source_types.includes(source))});if(amountDescending)filtered.sort((left,right)=>(right.amount_value??Number.NEGATIVE_INFINITY)-(left.amount_value??Number.NEGATIVE_INFINITY));page=1;render()}
 async function openSource(event,link,status){event.preventDefault();if(location.protocol!=='http:'&&location.protocol!=='https:'){status.textContent='请从 GUI 打开审核页后再打开来源文件';return}status.textContent='正在调用 Windows 默认程序…';try{const url=new URL('/open-source',location.origin);url.searchParams.set('path',link.dataset.path);url.searchParams.set('token',new URLSearchParams(location.search).get('token')||'');const response=await fetch(url);const result=await response.json();if(!response.ok)throw new Error(result.error||'打开失败');status.textContent='已交给 Windows 默认程序';}catch(error){status.textContent=`打开失败：${error.message}`}}
-function formatAmount(cents){return(cents/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}function renderSummary(){const totals=new Map();filtered.forEach(row=>{if(row.amount_value===null||!Number.isFinite(row.amount_value))return;const currency=row.currency||'—',entry=totals.get(currency)||{count:0,inflow:0,outflow:0},cents=Math.round(Math.abs(row.amount_value)*100);entry.count+=1;if(!row.is_cancelled_refund){if(row.direction==='inflow')entry.inflow+=cents;if(row.direction==='outflow')entry.outflow+=cents}totals.set(currency,entry)});const body=$('summaryBody');body.replaceChildren();if(!totals.size){const tr=node('tr'),td=node('td','当前筛选结果没有可汇总金额');td.colSpan=4;tr.append(td);body.append(tr);return}[...totals.entries()].sort(([a],[b])=>a.localeCompare(b,'zh-CN')).forEach(([currency,entry])=>{const tr=node('tr');appendCell(tr,currency);appendCell(tr,entry.count.toLocaleString());appendCell(tr,formatAmount(entry.inflow),'money');appendCell(tr,formatAmount(entry.outflow),'money');body.append(tr)})}
-function appendCell(tr,value,className){tr.append(node('td',value||'—',className))}function render(){const size=Number($('pageSize').value),pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages);const start=(page-1)*size,rows=filtered.slice(start,start+size),body=$('body');body.replaceChildren();rows.forEach((row,index)=>{const tr=node('tr');if(row.is_cancelled_refund){tr.classList.add('cancelled-refund');tr.title=`交易取消退款（${row.refund_pair_role}），不计入金额汇总`}appendCell(tr,start+index+1);appendCell(tr,row.institution);appendCell(tr,row.account_tail);appendCell(tr,row.transaction_card_tail);appendCell(tr,row.card_role);appendCell(tr,row.transaction_time);appendCell(tr,row.posting_date);const dir=node('td'),badge=node('span',directionLabel[row.direction]||'未知',`badge ${row.direction||'unknown'}`);dir.append(badge);tr.append(dir);appendCell(tr,row.amount,'money');appendCell(tr,row.currency);appendCell(tr,row.transaction_place);const other=node('td',undefined,'extra'),details=node('details'),detailTitle=node('summary',`定位 ${row.source_locations.length} 处 · 置信度 ${(row.confidence*100).toFixed(0)}%`),content=node('div',[`流水 SHA-256：${row.flow_hash_sha256||'—'}`,`归一化指纹：${row.record_fingerprint_sha256||'—'}`,`来源行 SHA-256：${row.source_record_hashes.join('、')||'—'}`,`来源：${row.source_types.join('、')||'—'}`,`余额：${row.balance}`,`参考号：${row.reference}`].join('\n')),status=node('div','', 'open-status');details.append(detailTitle,content);row.source_links.forEach(item=>{const link=node('a',`打开：${item.label}`,'source-link');link.href='#';link.dataset.path=item.path;link.addEventListener('click',event=>openSource(event,link,status));details.append(link)});details.append(status);other.append(details);if(row.warnings.length)other.append(node('div',row.warnings.join('；'),'warnings'));tr.append(other);body.append(tr)});$('filtered').textContent=filtered.length.toLocaleString();$('pageInfo').textContent=`第 ${page} / ${pages} 页，显示 ${rows.length} 条，共 ${filtered.length.toLocaleString()} 条`;$('prev').disabled=page<=1;$('next').disabled=page>=pages;$('empty').hidden=filtered.length!==0;renderSummary()}
+function formatAmount(cents){return(cents/100).toLocaleString('zh-CN',{minimumFractionDigits:2,maximumFractionDigits:2})}function renderSummary(){const totals=new Map();filtered.forEach(row=>{if(row.amount_value===null||!Number.isFinite(row.amount_value))return;const currency=row.currency||'—',entry=totals.get(currency)||{count:0,inflow:0,outflow:0};entry.count+=1;entry.inflow+=Math.round(Math.abs(row.summary_inflow_value||0)*100);entry.outflow+=Math.round(Math.abs(row.summary_outflow_value||0)*100);totals.set(currency,entry)});const body=$('summaryBody');body.replaceChildren();if(!totals.size){const tr=node('tr'),td=node('td','当前筛选结果没有可汇总金额');td.colSpan=4;tr.append(td);body.append(tr);return}[...totals.entries()].sort(([a],[b])=>a.localeCompare(b,'zh-CN')).forEach(([currency,entry])=>{const tr=node('tr');appendCell(tr,currency);appendCell(tr,entry.count.toLocaleString());appendCell(tr,formatAmount(entry.inflow),'money');appendCell(tr,formatAmount(entry.outflow),'money');body.append(tr)})}
+function appendCell(tr,value,className){tr.append(node('td',value||'—',className))}function render(){const size=Number($('pageSize').value),pages=Math.max(1,Math.ceil(filtered.length/size));page=Math.min(page,pages);const start=(page-1)*size,rows=filtered.slice(start,start+size),body=$('body');body.replaceChildren();rows.forEach((row,index)=>{const tr=node('tr');if(row.is_cancelled_refund){tr.classList.add('cancelled-refund');tr.title=`交易取消退款（${row.refund_pair_role}），不计入金额汇总`}else if(row.refund_pair_type==='small_difference'){tr.classList.add('refund-difference');tr.title=`差额退款（${row.refund_pair_role}），净支出 ${row.refund_difference} ${row.currency}`}else if(row.refund_pair_type==='partial'){tr.classList.add('partial-refund');tr.title=`部分退款（${row.refund_pair_role}），差额性质待确认`}appendCell(tr,start+index+1);appendCell(tr,row.institution);appendCell(tr,row.account_tail);appendCell(tr,row.transaction_card_tail);appendCell(tr,row.card_role);appendCell(tr,row.transaction_time);appendCell(tr,row.posting_date);const dir=node('td'),badge=node('span',directionLabel[row.direction]||'未知',`badge ${row.direction||'unknown'}`);dir.append(badge);tr.append(dir);appendCell(tr,row.amount,'money');appendCell(tr,row.currency);appendCell(tr,row.transaction_place);const other=node('td',undefined,'extra'),details=node('details'),detailTitle=node('summary',`定位 ${row.source_locations.length} 处 · 置信度 ${(row.confidence*100).toFixed(0)}%`),content=node('div',[`流水 SHA-256：${row.flow_hash_sha256||'—'}`,`归一化指纹：${row.record_fingerprint_sha256||'—'}`,`来源行 SHA-256：${row.source_record_hashes.join('、')||'—'}`,`来源：${row.source_types.join('、')||'—'}`,`余额：${row.balance}`,`参考号：${row.reference}`].join('\n')),status=node('div','', 'open-status');if(row.is_refund_pair){const label=row.refund_pair_type==='small_difference'?'净支出':'未退差额';other.append(node('div',`${row.refund_status} · ${row.refund_pair_role} · 原支出 ${row.refund_original_amount} − 退款 ${row.refund_received_amount} = ${label} ${row.refund_difference} ${row.currency}`,'refund-note'))}details.append(detailTitle,content);row.source_links.forEach(item=>{const link=node('a',`打开：${item.label}`,'source-link');link.href='#';link.dataset.path=item.path;link.addEventListener('click',event=>openSource(event,link,status));details.append(link)});details.append(status);other.append(details);if(row.warnings.length)other.append(node('div',row.warnings.join('；'),'warnings'));tr.append(other);body.append(tr)});$('filtered').textContent=filtered.length.toLocaleString();$('pageInfo').textContent=`第 ${page} / ${pages} 页，显示 ${rows.length} 条，共 ${filtered.length.toLocaleString()} 条`;$('prev').disabled=page<=1;$('next').disabled=page>=pages;$('empty').hidden=filtered.length!==0;renderSummary()}
 ['search','warningFilter','institutionFilter','cardRoleFilter','tailFilter','yearFilter','monthFilter','dateFrom','dateTo','directionFilter','amountFilter','currencyFilter','sourceFilter'].forEach(id=>$(id).addEventListener($(id).tagName==='INPUT'?'input':'change',applyFilters));$('amountSortButton').addEventListener('click',()=>{amountDescending=!amountDescending;const button=$('amountSortButton');button.textContent=amountDescending?'已按金额从大到小':'默认顺序';button.setAttribute('aria-pressed',String(amountDescending));button.classList.toggle('active',amountDescending);applyFilters()});$('pageSize').addEventListener('change',()=>{page=1;render()});$('prev').addEventListener('click',()=>{if(page>1){page--;render()}});$('next').addEventListener('click',()=>{const pages=Math.ceil(filtered.length/Number($('pageSize').value));if(page<pages){page++;render()}});applyFilters();
 </script></body></html>'''

@@ -89,6 +89,8 @@ financial_document_ai_fallback:
 
 bank_transaction_review:
   credit_card_refund_window_days: ${BANK_TRANSACTION_REVIEW_REFUND_WINDOW_DAYS:-31}
+  partial_refund_max_difference: ${BANK_TRANSACTION_REVIEW_PARTIAL_REFUND_MAX_DIFFERENCE:-200}
+  partial_refund_max_difference_ratio: ${BANK_TRANSACTION_REVIEW_PARTIAL_REFUND_MAX_DIFFERENCE_RATIO:-0.05}
   source_selection_file: ${BANK_SOURCE_SELECTION_FILE:-./raw_data/bank_source_selection.local.txt}
 
 financial_attachment_cracker:

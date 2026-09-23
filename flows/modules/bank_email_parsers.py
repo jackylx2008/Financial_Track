@@ -81,7 +81,10 @@ def parse_bank_email(bank_key: str, body_text: str, sent_at: str) -> list[dict[s
         merchant = _merchant(segment)
         tail = _account_tail(segment) or account_tail
         key = (transaction_time, direction, amount.lstrip("+-"), re.sub(r"\s+", "", summary))
-        if key in seen:
+        # 工行月度账单可能在同一天、同一卡片上出现多笔文本完全相同的
+        # 消费。打印流水中的精确时间和余额才能区分这些交易，因此这里
+        # 必须保留邮件中的出现次数，不能在解析阶段按文本内容去重。
+        if key in seen and not is_icbc_statement:
             continue
         seen.add(key)
         result = {

@@ -337,6 +337,82 @@ class FinancialTraceabilityTests(unittest.TestCase):
         self.assertEqual(len(rerun), 1)
         self.assertEqual(rerun_stats["icbc_statement_transactions_matched"], 0)
 
+    def test_icbc_same_value_statement_rows_match_distinct_pdf_rows_by_occurrence(self) -> None:
+        posting_amounts = ["251.57", "248.13", "248.13"]
+        pdf_records = []
+        email_records = []
+        for index, posting_amount in enumerate(posting_amounts, start=1):
+            pdf_records.append(
+                make_transaction(
+                    bank_key="icbc",
+                    bank_name="工商银行",
+                    account_tail="2997",
+                    transaction_time=f"2024-09-19 {index + 6:02d}:29:5{index}",
+                    posting_date="2024-09-19",
+                    direction="outflow",
+                    amount="5000.00",
+                    currency="JPY",
+                    balance=f"-{49800 + index * 200}.00",
+                    merchant="Suica Charge",
+                    summary="消费",
+                    source_records=[
+                        {
+                            "source_type": "email_attachment_pdf_reviewed",
+                            "source_file": "flow.pdf",
+                            "page": 54,
+                            "row": index,
+                        }
+                    ],
+                    raw_record={
+                        "line": (
+                            f"{index + 6:02d}:29:5{index} 6225970090022997 借 日元 5,000.00 "
+                            f"人民币 {posting_amount} -50,000.00 消费 Suica Charge"
+                        ),
+                        "入账金额": posting_amount,
+                    },
+                )
+            )
+            raw_line = (
+                "2997 2024-09-19 2024-09-19 跨行消费 Suica Charge "
+                f"5,000.00/JPY {posting_amount}/RMB(支出)"
+            )
+            email = make_transaction(
+                bank_key="icbc",
+                bank_name="工商银行",
+                account_tail="2997",
+                transaction_time="2024-09-19",
+                posting_date="2024-09-19",
+                direction="outflow",
+                amount="5000.00",
+                currency="JPY",
+                merchant="Suica Charge",
+                summary=raw_line,
+                source_records=[
+                    {
+                        "source_type": "email_body",
+                        "source_file": "monthly.eml",
+                        "candidate_index": index,
+                    }
+                ],
+                raw_record={
+                    "parser": "icbc_credit_card_statement_v1",
+                    "raw_line": raw_line,
+                },
+            )
+            email.update(card_type="信用卡", card_role="主卡", transaction_card_tail="2997")
+            email_records.append(email)
+
+        records, stats = dedupe_transactions(email_records + pdf_records)
+
+        self.assertEqual(len(records), 3)
+        self.assertEqual(stats["icbc_statement_transactions_matched"], 3)
+        self.assertEqual([len(record["source_records"]) for record in records], [2, 2, 2])
+        self.assertTrue(all(not record["warnings"] for record in records))
+        self.assertEqual(
+            [record["raw_record"]["入账金额"] for record in records],
+            posting_amounts,
+        )
+
     def test_icbc_foreign_currency_email_matches_pdf_by_posting_date(self) -> None:
         pdf = make_transaction(
             bank_key="icbc",

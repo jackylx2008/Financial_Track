@@ -116,6 +116,11 @@ def run(
     )
     payment_keys = {"alipay", "wechat"}
     refund_window_days = review_config.get("credit_card_refund_window_days", 31)
+    partial_refund_max_difference = review_config.get("partial_refund_max_difference", 200)
+    partial_refund_max_difference_ratio = review_config.get(
+        "partial_refund_max_difference_ratio",
+        0.05,
+    )
     bank_review_records = [item for item in deduped_transactions if item.get("bank_key") not in payment_keys]
     payment_review_records = [item for item in deduped_transactions if item.get("bank_key") in payment_keys]
     full_review_html = write_full_review_html(
@@ -123,6 +128,8 @@ def run(
         full_review_html_path,
         title="个人银行交易完整流水清单",
         credit_card_refund_window_days=refund_window_days,
+        partial_refund_max_difference=partial_refund_max_difference,
+        partial_refund_max_difference_ratio=partial_refund_max_difference_ratio,
     )
     payment_review_html = write_full_review_html(
         payment_review_records,
@@ -130,6 +137,8 @@ def run(
         title="支付宝与微信支付完整人工审核集",
         include_date_range=False,
         credit_card_refund_window_days=refund_window_days,
+        partial_refund_max_difference=partial_refund_max_difference,
+        partial_refund_max_difference_ratio=partial_refund_max_difference_ratio,
     )
     unresolved_files = attachment_stats.get("unresolved_files", [])
     unresolved_path.write_text(
