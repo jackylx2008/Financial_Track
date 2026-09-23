@@ -79,11 +79,13 @@ def read_standalone_bank_transactions(
 def read_attachment_transactions(
     manifest_path: Path,
     ai_fallback: FinancialDocumentAiFallback | None = None,
+    excluded_source_tokens: list[str] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if not manifest_path.exists():
         return [], {
             "manifest_exists": False,
             "files_seen": 0,
+            "files_excluded": 0,
             "transactions": 0,
             "parse_failures": [],
             "unresolved_files": [],
@@ -94,8 +96,13 @@ def read_attachment_transactions(
     pending_ai: list[tuple[Path, dict[str, Any]]] = []
     unresolved_files: list[dict[str, str]] = []
     files_seen = 0
+    files_excluded = 0
+    excluded_tokens = [token.casefold() for token in (excluded_source_tokens or []) if token]
     for item in manifest:
         if item.get("status") != "success":
+            continue
+        if excluded_tokens and _manifest_item_matches_tokens(item, excluded_tokens):
+            files_excluded += len(item.get("output_files", []))
             continue
         for output_file in item.get("output_files", []):
             files_seen += 1
@@ -139,6 +146,7 @@ def read_attachment_transactions(
     stats = {
         "manifest_exists": True,
         "files_seen": files_seen,
+        "files_excluded": files_excluded,
         "transactions": len(transactions),
         "parse_failures": failures,
         "unresolved_files": unresolved_files,
@@ -146,6 +154,11 @@ def read_attachment_transactions(
     if ai_fallback is not None:
         stats["ai_fallback"] = ai_fallback.stats()
     return transactions, stats
+
+
+def _manifest_item_matches_tokens(item: object, tokens: list[str]) -> bool:
+    searchable = json.dumps(item, ensure_ascii=False, sort_keys=True).casefold()
+    return any(token in searchable for token in tokens)
 
 
 def _unresolved_file(
@@ -800,7 +813,9 @@ def _read_generic_bank_rows(
             posting_date=normalized_posting_date[:10],
             direction=direction,
             amount=amount,
-            currency=_first_value(row, "币种", "货币") or "CNY",
+            # 工行信用卡 PDF 将原交易与入账币种拆成两列。交易金额对应
+            # “交易币种”，不能因为没有通用“币种”列就回退为人民币。
+            currency=_first_value(row, "交易币种", "币种", "货币", "入账币种") or "CNY",
             merchant=merchant,
             counterparty=counterparty,
             counterparty_account=counterparty_account,

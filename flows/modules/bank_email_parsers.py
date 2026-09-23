@@ -62,7 +62,15 @@ def parse_bank_email(bank_key: str, body_text: str, sent_at: str) -> list[dict[s
         statement_match = ICBC_STATEMENT_ROW_PREFIX_RE.match(segment) if is_icbc_statement else None
         if is_icbc_statement and statement_match is None:
             continue
-        if not _looks_like_transaction(segment):
+        statement_detail_match = (
+            ICBC_STATEMENT_DETAILS_RE.match(statement_match.group("details"))
+            if statement_match is not None
+            else None
+        )
+        # 月度账单行已有严格的日期、卡尾号、双币金额和收支标记结构。
+        # 商户名较长时，“消费”与金额可能相隔超过通用文本探测窗口，
+        # 此时不能因为 _looks_like_transaction() 未命中而漏掉整行。
+        if statement_detail_match is None and not _looks_like_transaction(segment):
             continue
         amount = _transaction_amount(segment)
         if amount is None or _is_zero(amount):
@@ -224,6 +232,7 @@ def _apply_icbc_statement_fields(
     transaction_type, _, merchant = description.partition(" ")
     result["merchant"] = merchant.strip()
     result["counterparty"] = merchant.strip()
+    result["amount"] = detail_match.group("transaction_amount").replace(",", "")
     result["currency"] = detail_match.group("currency").upper()
     result["direction"] = "outflow" if detail_match.group("marker") == "支出" else "inflow"
 

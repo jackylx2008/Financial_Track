@@ -69,16 +69,23 @@ class NormalizationResultTests(unittest.TestCase):
             )
             ctx = AppContext(
                 project_root=root,
-                config={"financial_document_ai_fallback": {"enabled": False}},
+                config={
+                    "financial_document_ai_fallback": {"enabled": False},
+                    "bank_transaction_review": {"credit_card_refund_window_days": 7},
+                },
                 entry_name="test",
             )
 
             summary = run_bank_normalize(ctx, email_records, manifest, "processed_data/normalized")
             items = load_unresolved_files(root)
+            review_html = (
+                root / "processed_data/normalized/bank_transactions_full_review.html"
+            ).read_text(encoding="utf-8")
 
         self.assertEqual(summary["unresolved_files"], 1)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["filename"], "statement.txt")
+        self.assertIn('"credit_card_refund_window_days":7', review_html)
 
 
 if __name__ == "__main__":

@@ -15,12 +15,18 @@ from urllib.parse import parse_qs, urlparse
 class ReviewFileServer:
     """Serve the review HTML locally and open approved source files via the OS."""
 
-    def __init__(self, html_path: Path, allowed_root: Path) -> None:
+    def __init__(
+        self,
+        html_path: Path,
+        allowed_root: Path,
+        selection_saver: Callable[[dict[str, object]], dict[str, object]] | None = None,
+    ) -> None:
         self.html_path = html_path.resolve()
         self.allowed_root = allowed_root.resolve()
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
         self._token = secrets.token_urlsafe(24)
+        self.selection_saver = selection_saver
 
     @property
     def url(self) -> str:
@@ -36,6 +42,7 @@ class ReviewFileServer:
             self.allowed_root,
             self._token,
             open_with_default_application,
+            self.selection_saver,
         )
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
         self._thread = threading.Thread(target=self._server.serve_forever, name="review-file-server", daemon=True)
@@ -92,6 +99,7 @@ def _handler_factory(
     allowed_root: Path,
     token: str,
     opener: Callable[[Path], None],
+    selection_saver: Callable[[dict[str, object]], dict[str, object]] | None = None,
 ) -> type[BaseHTTPRequestHandler]:
     class ReviewHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
@@ -106,6 +114,27 @@ def _handler_factory(
                 self._open_source(parse_qs(parsed.query).get("path", [""])[0])
                 return
             self.send_error(HTTPStatus.NOT_FOUND)
+
+        def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+            parsed = urlparse(self.path)
+            if parse_qs(parsed.query).get("token", [""])[0] != token:
+                self._send_json({"error": "无效的本地审核会话"}, HTTPStatus.FORBIDDEN)
+                return
+            if parsed.path != "/save-selection" or selection_saver is None:
+                self.send_error(HTTPStatus.NOT_FOUND)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                if length <= 0 or length > 65536:
+                    raise ValueError("选择数据大小无效")
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                if not isinstance(payload, dict):
+                    raise ValueError("选择数据必须是对象")
+                result = selection_saver(payload)
+            except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+                self._send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(result, HTTPStatus.OK)
 
         def _serve_review(self) -> None:
             if not html_path.is_file():
@@ -128,7 +157,7 @@ def _handler_factory(
                 return
             self._send_json({"status": "opened", "path": str(source)}, HTTPStatus.OK)
 
-        def _send_json(self, payload: dict[str, str], status: HTTPStatus) -> None:
+        def _send_json(self, payload: dict[str, object], status: HTTPStatus) -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")

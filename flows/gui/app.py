@@ -9,10 +9,12 @@ import re
 import time
 import tkinter as tk
 import webbrowser
+from html import unescape
 from pathlib import Path
 from queue import Empty
 from tkinter import filedialog, messagebox, ttk
 from tkinter.scrolledtext import ScrolledText
+from typing import Callable
 
 from flows.gui.task_runner import TaskEvent, TaskRunner
 from flows.gui.normalization_results import load_unresolved_files
@@ -26,6 +28,12 @@ from flows.gui.workflows import (
 )
 from flows.modules.android_capture_config import load_android_app_configs
 from flows.modules.config_loader import get_cloudstation_root, load_config
+from flows.modules.icbc_credit_pdf_source_review import (
+    load_icbc_credit_pdf_groups,
+    save_icbc_credit_pdf_selection,
+    selected_group_token,
+    write_icbc_credit_pdf_review_html,
+)
 from flows.modules.llamacpp_client import LlamaCppConfig, safe_base_url
 from logging_config import setup_logger
 
@@ -33,6 +41,19 @@ from logging_config import setup_logger
 LOG_LINE_LIMIT = 2500
 PROGRESS_PATTERN = re.compile(r"(?:\[)?(\d+)\s*/\s*(\d+)")
 logger = logging.getLogger(__name__)
+
+
+def bank_review_button_text(path: Path) -> str:
+    """从已生成页面读取动态日期范围，避免 GUI 另行扫描大型流水文件。"""
+    base_title = "个人银行交易完整流水清单"
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as file:
+            head = file.read(4096)
+    except OSError:
+        return f"打开{base_title}"
+    match = re.search(r"<title>([^<]+)</title>", head, flags=re.IGNORECASE)
+    title = unescape(match.group(1)).strip() if match else ""
+    return f"打开{title}" if title.startswith(base_title) else f"打开{base_title}"
 
 
 class WorkflowPanel(ttk.Frame):
@@ -81,7 +102,15 @@ class WorkflowPanel(ttk.Frame):
         self.start_button.grid(row=0, column=2, padx=(0, 8))
         self.cancel_button = ttk.Button(button_row, text="取消任务", command=self.app.cancel_task, state="disabled")
         self.cancel_button.grid(row=0, column=3)
-        if spec.key == "normalize":
+        if spec.key == "email":
+            self.icbc_source_button = ttk.Button(
+                button_row,
+                text="选择工行信用卡 PDF 来源",
+                command=self.open_icbc_credit_pdf_source_review,
+            )
+            self.icbc_source_button.grid(row=0, column=4, padx=(8, 0))
+            self.input_widgets.append(self.icbc_source_button)
+        elif spec.key == "normalize":
             self.order_review_button = ttk.Button(
                 button_row,
                 text="打开购物审核 HTML",
@@ -111,7 +140,13 @@ class WorkflowPanel(ttk.Frame):
         ttk.Button(toolbar, text="刷新列表", command=self.refresh_unresolved_files).grid(
             row=0, column=1, padx=(6, 0)
         )
-        ttk.Button(toolbar, text="打开银行审核 HTML", command=self.open_review_html).grid(
+        review_path = self.app.project_root / "processed_data/normalized/bank_transactions_full_review.html"
+        self.bank_review_button = ttk.Button(
+            toolbar,
+            text=bank_review_button_text(review_path),
+            command=self.open_review_html,
+        )
+        self.bank_review_button.grid(
             row=0, column=2, padx=(6, 0)
         )
         ttk.Button(toolbar, text="打开支付审核 HTML", command=self.open_payment_review_html).grid(
@@ -157,6 +192,10 @@ class WorkflowPanel(ttk.Frame):
         self.unresolved_status_var.set(
             f"共 {len(items)} 个文件待人工审核或按需 AI/OCR" if items else "没有未自动提取的文件"
         )
+        review_button = getattr(self, "bank_review_button", None)
+        if review_button is not None:
+            path = self.app.project_root / "processed_data/normalized/bank_transactions_full_review.html"
+            review_button.configure(text=bank_review_button_text(path))
 
     def open_review_html(self) -> None:
         path = self.app.project_root / "processed_data/normalized/bank_transactions_full_review.html"
@@ -189,6 +228,63 @@ class WorkflowPanel(ttk.Frame):
             messagebox.showinfo("审核文件尚未生成", "请先执行 PDF 转 HTML 审核。", parent=self)
             return
         self.app.open_review_html(path)
+
+    def open_icbc_credit_pdf_source_review(self) -> None:
+        manifest_path = (
+            self.app.project_root
+            / "raw_data/financial_email/extracted_attachments/attachment_extract_manifest.json"
+        )
+        try:
+            config_path = Path(self.app.selected_config_path())
+            config = load_config(config_path)
+            review_config = config.get("bank_transaction_review", {})
+            configured_path = (
+                review_config.get("source_selection_file", "./raw_data/bank_source_selection.local.txt")
+                if isinstance(review_config, dict)
+                else "./raw_data/bank_source_selection.local.txt"
+            )
+            selection_path = Path(str(configured_path)).expanduser()
+            if not selection_path.is_absolute():
+                selection_path = config_path.parent / selection_path
+            groups = load_icbc_credit_pdf_groups(
+                manifest_path,
+                self.app.project_root / "raw_data",
+            )
+            if not groups:
+                messagebox.showinfo(
+                    "未找到候选 PDF",
+                    "邮件附件清单中没有可供选择的工商银行信用卡 PDF。请先获取并解密邮件附件。",
+                    parent=self,
+                )
+                return
+            selected = selected_group_token(selection_path, groups)
+            output_path = (
+                self.app.project_root
+                / "processed_data/normalized/icbc_credit_pdf_source_review.html"
+            )
+            write_icbc_credit_pdf_review_html(output_path, groups, selected)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            self.app.append_log(f"生成工行信用卡 PDF 来源审核页失败：{exc}", "error")
+            messagebox.showerror("无法生成来源审核页", str(exc), parent=self)
+            return
+
+        def save_selection(payload: dict[str, object]) -> dict[str, object]:
+            token = str(payload.get("authoritative_group_token") or "").strip()
+            result = save_icbc_credit_pdf_selection(selection_path, groups, token)
+            self.app.root.after(
+                0,
+                lambda: self.app.append_log(
+                    f"已保存工行信用卡账单来源选择：{token}",
+                    "success",
+                ),
+            )
+            return result
+
+        self.app.open_review_html(output_path, selection_saver=save_selection)
+        self.app.append_log(
+            f"工行信用卡来源审核页已列出 {len(groups)} 组邮件/PDF。",
+            "success",
+        )
 
     def _build_field(self, parent: ttk.LabelFrame, field: FieldSpec, row: int, column: int) -> None:
         container = ttk.Frame(parent, padding=(4, 3))
@@ -642,10 +738,18 @@ class FinancialTrackApp:
         self.log_text.delete("1.0", "end")
         self.log_text.configure(state="disabled")
 
-    def open_review_html(self, path: Path) -> None:
+    def open_review_html(
+        self,
+        path: Path,
+        selection_saver: Callable[[dict[str, object]], dict[str, object]] | None = None,
+    ) -> None:
         if self.review_server is not None:
             self.review_server.close()
-        self.review_server = ReviewFileServer(path, self.project_root / "raw_data")
+        self.review_server = ReviewFileServer(
+            path,
+            self.project_root / "raw_data",
+            selection_saver=selection_saver,
+        )
         url = self.review_server.start()
         webbrowser.open(url)
         self.append_log("已打开审核 HTML；来源文件链接将调用本机默认程序。", "success")

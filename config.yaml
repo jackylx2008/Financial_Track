@@ -87,6 +87,10 @@ financial_document_ai_fallback:
   ocr_max_pages: ${FINANCIAL_DOCUMENT_AI_OCR_MAX_PAGES:-20}
   ocr_dpi: ${FINANCIAL_DOCUMENT_AI_OCR_DPI:-144}
 
+bank_transaction_review:
+  credit_card_refund_window_days: ${BANK_TRANSACTION_REVIEW_REFUND_WINDOW_DAYS:-31}
+  source_selection_file: ${BANK_SOURCE_SELECTION_FILE:-./raw_data/bank_source_selection.local.txt}
+
 financial_attachment_cracker:
   hashcat_path: ${FINANCIAL_ATTACHMENT_HASHCAT_PATH:-../hashcat/hashcat.exe}
   zip2john_path: ${FINANCIAL_ATTACHMENT_ZIP2JOHN_PATH:-../john-1.9.0-jumbo-1-win64/run/zip2john.exe}

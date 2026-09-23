@@ -9,6 +9,32 @@ from flows.modules.flow_hashes import bank_transaction_hash
 
 MONEY_RE = re.compile(r"^[+-]?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?$|^[+-]?\d+(?:\.\d{1,2})?$")
 DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+CURRENCY_ALIASES = {
+    "RMB": "CNY",
+    "人民币": "CNY",
+    "人民币元": "CNY",
+    "￥": "CNY",
+    "¥": "CNY",
+    "英镑": "GBP",
+    "日元": "JPY",
+    "新加坡元": "SGD",
+    "美元": "USD",
+    "港币": "HKD",
+    "港元": "HKD",
+    "新台币": "TWD",
+    "新臺幣": "TWD",
+    "台币": "TWD",
+    "臺幣": "TWD",
+}
+CURRENCY_DISPLAY_NAMES = {
+    "CNY": "人民币",
+    "GBP": "英镑",
+    "JPY": "日元",
+    "SGD": "新加坡元",
+    "USD": "美元",
+    "HKD": "港币",
+    "TWD": "新台币",
+}
 
 
 def make_transaction(
@@ -54,7 +80,7 @@ def make_transaction(
         "direction": direction,
         "amount": decimal_to_string(abs(amount_decimal)) if amount_decimal is not None else "",
         "signed_amount": decimal_to_string(signed_amount) if signed_amount is not None else "",
-        "currency": currency or "CNY",
+        "currency": normalize_currency(currency),
         "merchant": merchant,
         "counterparty": counterparty,
         "counterparty_account": counterparty_account,
@@ -104,6 +130,17 @@ def normalize_direction(direction: str, amount: Decimal | None) -> str:
         if amount > 0:
             return "inflow"
     return "unknown"
+
+
+def normalize_currency(currency: str | None) -> str:
+    value = str(currency or "CNY").strip()
+    return CURRENCY_ALIASES.get(value.upper(), CURRENCY_ALIASES.get(value, value.upper()))
+
+
+def currency_display_name(currency: str | None) -> str:
+    """返回供中文审核界面使用的币种名称，底层数据仍保留标准代码。"""
+    normalized = normalize_currency(currency)
+    return CURRENCY_DISPLAY_NAMES.get(normalized, normalized)
 
 
 def signed_decimal(amount: Decimal | None, direction: str) -> Decimal | None:

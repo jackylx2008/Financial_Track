@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from queue import Empty
 
+from flows.gui.app import bank_review_button_text
 from flows.gui.task_runner import TaskEvent, TaskRunner
 from flows.gui.workflows import (
     WORKFLOW_BY_KEY,
@@ -19,6 +20,27 @@ from flows.gui.workflows import (
 def default_values(workflow_key: str) -> dict[str, str | bool]:
     spec = WORKFLOW_BY_KEY[workflow_key]
     return {field.key: field.default for field in spec.fields}
+
+
+class ReviewTitleTests(unittest.TestCase):
+    def test_bank_review_button_uses_generated_date_range(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "review.html"
+            path.write_text(
+                "<html><head><title>个人银行交易完整流水清单（2015-01-01 至 2026-09-21）</title></head></html>",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                bank_review_button_text(path),
+                "打开个人银行交易完整流水清单（2015-01-01 至 2026-09-21）",
+            )
+
+    def test_bank_review_button_has_fallback_before_generation(self) -> None:
+        self.assertEqual(
+            bank_review_button_text(Path("missing-review.html")),
+            "打开个人银行交易完整流水清单",
+        )
 
 
 class WorkflowCommandTests(unittest.TestCase):

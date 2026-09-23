@@ -6,7 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from flows.modules.bank_transaction_deduper import dedupe_transactions
-from flows.modules.bank_transaction_schema import make_transaction
+from flows.modules.bank_transaction_schema import currency_display_name, make_transaction, normalize_currency
 from flows.modules.financial_transaction_linker import (
     link_orders_to_payments,
     link_payment_accounts_to_banks,
@@ -22,6 +22,32 @@ from flows.modules.transaction_traceability import (
 
 
 class FinancialTraceabilityTests(unittest.TestCase):
+    def test_renminbi_currency_aliases_are_normalized_to_cny(self) -> None:
+        self.assertEqual(normalize_currency("CNY"), "CNY")
+        self.assertEqual(normalize_currency("RMB"), "CNY")
+        self.assertEqual(normalize_currency("人民币"), "CNY")
+        self.assertEqual(normalize_currency("人民币元"), "CNY")
+        transaction = make_transaction(bank_key="demo", amount="1.00", currency="RMB")
+        self.assertEqual(transaction["currency"], "CNY")
+
+    def test_currency_display_names_are_chinese(self) -> None:
+        expected = {
+            "CNY": "人民币",
+            "RMB": "人民币",
+            "人民币": "人民币",
+            "GBP": "英镑",
+            "英镑": "英镑",
+            "JPY": "日元",
+            "日元": "日元",
+            "SGD": "新加坡元",
+            "新加坡元": "新加坡元",
+            "USD": "美元",
+            "美元": "美元",
+        }
+        for value, display_name in expected.items():
+            with self.subTest(currency=value):
+                self.assertEqual(currency_display_name(value), display_name)
+
     def test_flow_hashes_are_full_and_source_specific(self) -> None:
         records = [
             make_transaction(
@@ -310,6 +336,91 @@ class FinancialTraceabilityTests(unittest.TestCase):
         rerun, rerun_stats = dedupe_transactions(records)
         self.assertEqual(len(rerun), 1)
         self.assertEqual(rerun_stats["icbc_statement_transactions_matched"], 0)
+
+    def test_icbc_foreign_currency_email_matches_pdf_by_posting_date(self) -> None:
+        pdf = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            transaction_time="2024-09-25 22:38:20",
+            posting_date="2024-09-25",
+            direction="outflow",
+            amount="5170.00",
+            currency="日元",
+            account_tail="0789",
+            merchant="JR CENTRAL",
+            summary="消费",
+            source_records=[{"source_type": "email_attachment_pdf_reviewed", "source_file": "flow.pdf"}],
+            raw_record={
+                "line": "22:38:20 4135200057130789 借 日元 5,170.00 日元 5,170.00 -271,855.00 消费 JR CENTRAL"
+            },
+        )
+        email = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            transaction_time="2024-09-22",
+            posting_date="2024-09-25",
+            direction="outflow",
+            amount="5170.00",
+            currency="JPY",
+            account_tail="0789",
+            merchant="JR CENTRAL",
+            summary="0789 2024-09-22 2024-09-25 消费 JR CENTRAL 5,170.00/JPY 5,170.00/JPY(支出)",
+            source_records=[{"source_type": "email_body", "source_file": "monthly.eml"}],
+            raw_record={
+                "raw_line": "0789 2024-09-22 2024-09-25 消费 JR CENTRAL 5,170.00/JPY 5,170.00/JPY(支出)"
+            },
+        )
+        email.update(card_type="信用卡", card_role="主卡", transaction_card_tail="0789")
+
+        records, stats = dedupe_transactions([pdf, email])
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(stats["icbc_statement_transactions_matched"], 1)
+        self.assertEqual(records[0]["currency"], "JPY")
+        self.assertEqual(records[0]["transaction_time"], "2024-09-22")
+        self.assertEqual(records[0]["posting_date"], "2024-09-25")
+        self.assertEqual(len(records[0]["source_records"]), 2)
+
+    def test_icbc_other_currency_pdf_uses_monthly_statement_currency(self) -> None:
+        pdf = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            transaction_time="2025-09-30 22:37:34",
+            posting_date="2025-09-30",
+            direction="outflow",
+            amount="800.00",
+            currency="其它",
+            account_tail="0789",
+            merchant="APPLE ASIA LLC,TAIWAN BRA",
+            source_records=[{"source_type": "email_attachment_pdf_reviewed", "source_file": "flow.pdf"}],
+            raw_record={
+                "line": "22:37:34 4135200057130789 借 其它 800.00 美元 26.26 -26.26 消费 APPLE ASIA LLC,TAIWAN BRA"
+            },
+        )
+        email = make_transaction(
+            bank_key="icbc",
+            bank_name="工商银行",
+            transaction_time="2025-09-29",
+            posting_date="2025-09-30",
+            direction="outflow",
+            amount="800.00",
+            currency="TWD",
+            account_tail="0789",
+            merchant="APPLE ASIA LLC,TAIWAN BRA",
+            source_records=[{"source_type": "email_body", "source_file": "monthly.eml"}],
+            raw_record={
+                "raw_line": "0789 2025-09-29 2025-09-30 境外消费 APPLE ASIA LLC,TAIWAN BRA 800.00/TWD 26.26/USD(支出)"
+            },
+        )
+        email.update(card_type="信用卡", card_role="主卡", transaction_card_tail="0789")
+
+        records, stats = dedupe_transactions([pdf, email])
+
+        self.assertEqual(len(records), 1)
+        self.assertEqual(stats["icbc_statement_transactions_matched"], 1)
+        self.assertEqual(records[0]["currency"], "TWD")
+        self.assertEqual(records[0]["amount"], "800.00")
+        self.assertEqual(records[0]["transaction_time"], "2025-09-29")
 
     def test_order_duplicates_prefer_more_complete_record(self) -> None:
         partial = {

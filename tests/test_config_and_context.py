@@ -13,6 +13,16 @@ from flows.modules.config_loader import get_cloudstation_root, load_common_env, 
 
 
 class ConfigLoaderTests(unittest.TestCase):
+    def test_project_config_has_credit_card_refund_window(self) -> None:
+        project_root = Path(__file__).resolve().parents[1]
+        with patch.dict(os.environ, {}, clear=True):
+            config = load_config(project_root / "config.yaml", load_env=False)
+
+        self.assertEqual(
+            config["bank_transaction_review"]["credit_card_refund_window_days"],
+            31,
+        )
+
     def test_existing_environment_value_has_priority_over_common_env(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

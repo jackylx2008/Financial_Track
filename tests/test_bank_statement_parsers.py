@@ -151,6 +151,21 @@ CN
         self.assertEqual({row["account_tail"] for row in rows}, {"2997", "3348"})
         self.assertEqual({row["card_role"] for row in rows}, {"主卡", "副卡"})
 
+    def test_icbc_foreign_statement_keeps_original_currency_and_long_merchant(self) -> None:
+        text = """信 用 卡 对 账 单
+---主卡明细---
+0789 2025-09-29 2025-09-30 境外消费 APPLE ASIA LLC,TAIWAN BRA 800.00/TWD 26.26/USD(支出)
+"""
+
+        rows = parse_bank_email("icbc", text, "2025-10-12T12:00:00+08:00")
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["transaction_time"], "2025-09-29")
+        self.assertEqual(rows[0]["posting_date"], "2025-09-30")
+        self.assertEqual(rows[0]["amount"], "800.00")
+        self.assertEqual(rows[0]["currency"], "TWD")
+        self.assertEqual(rows[0]["merchant"], "APPLE ASIA LLC,TAIWAN BRA")
+
 
 class AttachmentParserTests(unittest.TestCase):
     def test_human_approved_pdf_is_never_sent_to_ai_fallback(self) -> None:
@@ -273,11 +288,11 @@ class AttachmentParserTests(unittest.TestCase):
                                 "2026-01-02 10:11:12",
                                 "6222000000005670",
                                 "借",
-                                "人民币",
-                                "88.50",
-                                "人民币",
-                                "88.50",
-                                "-88.50",
+                                "日元",
+                                "5,170.00",
+                                "日元",
+                                "5,170.00",
+                                "-5,170.00",
                                 "",
                                 "",
                                 "消费",
@@ -298,6 +313,8 @@ class AttachmentParserTests(unittest.TestCase):
             )
 
         self.assertEqual(rows[0]["merchant"], "示例商户全名")
+        self.assertEqual(rows[0]["amount"], "5170.00")
+        self.assertEqual(rows[0]["currency"], "JPY")
         self.assertEqual(rows[0]["transaction_card_tail"], "5670")
         self.assertEqual(rows[0]["card_type"], "信用卡")
 
@@ -724,40 +741,62 @@ class FilteringAndReviewTests(unittest.TestCase):
             "institutionFilter",
             "cardRoleFilter",
             "tailFilter",
+            "yearFilter",
+            "monthFilter",
             "dateFrom",
             "dateTo",
             "directionFilter",
             "amountFilter",
             "currencyFilter",
-            "merchantFilter",
-            "summaryFilter",
-            "channelFilter",
-            "accountFilter",
             "sourceFilter",
+            "amountSortButton",
         ):
             self.assertIn(f'id="{filter_id}"', html)
+        for removed_filter in ("merchantFilter", "summaryFilter", "channelFilter", "accountFilter"):
+            self.assertNotIn(f'id="{removed_filter}"', html)
         self.assertIn('<option value="yes">有告警</option>', html)
         self.assertIn('<option value="no">无告警</option>', html)
         self.assertIn("warning==='yes'?row.warnings.length>0", html)
         self.assertIn('"card_roles":["主卡"]', html)
+        self.assertIn('"years":["2026"]', html)
+        self.assertIn('"months":["2026-09"]', html)
         self.assertIn("row.card_role===cardRole", html)
+        self.assertIn("date.startsWith(year)", html)
+        self.assertIn("date.startsWith(month)", html)
         self.assertNotIn(">月份<", html)
         self.assertNotIn(">账户全名<", html)
+        self.assertEqual(
+            result["title"],
+            "个人银行交易完整流水清单（2026-09-01 至 2026-09-01）",
+        )
+        self.assertIn(result["title"], html)
         self.assertIn("建设银行借记卡", html)
         self.assertIn("完整商户名称 / 完整交易对方", html)
         self.assertIn("6227000000005678", html)
-        self.assertIn("商户/对方全名", html)
-        self.assertIn("对方账号", html)
+        for removed_column in ("商户/对方全名", "对方账号", "摘要", "渠道"):
+            self.assertNotIn(f">{removed_column}</th>", html)
+        self.assertIn("JSON.stringify(row).toLowerCase().includes(query)", html)
         self.assertIn("卡号后4位", html)
+        self.assertIn(">交易场所</th>", html)
+        self.assertIn('"transaction_place":"—"', html)
+        self.assertIn("appendCell(tr,row.transaction_place)", html)
         self.assertIn("textIncludes(row.transaction_card_tail,tail)", html)
         self.assertNotIn("交易类型", html)
         self.assertIn("openSource", html)
         self.assertIn("完整且不脱敏的交易摘要", html)
         self.assertIn("5200.25", html)
         self.assertIn("当前筛选金额汇总", html)
+        self.assertIn('"currencies":["人民币"]', html)
+        self.assertIn("对应币种的基本单位", html)
         self.assertIn("收入金额", html)
         self.assertIn("支出金额", html)
+        self.assertNotIn(">总金额</th>", html)
+        self.assertNotIn("entry.total", html)
+        self.assertIn("td.colSpan=4", html)
         self.assertIn("renderSummary()", html)
+        self.assertIn("let page=1,filtered=[],amountDescending=false", html)
+        self.assertIn("filtered.sort((left,right)", html)
+        self.assertIn("已按金额从大到小", html)
         self.assertIn('value="5000-10000"', html)
         self.assertIn("row.source_locations", html)
         self.assertIn("解压文件：statement.xlsx", html)
@@ -804,6 +843,103 @@ class FilteringAndReviewTests(unittest.TestCase):
 
         self.assertIn("免密PDF：statement_decrypted.pdf", html)
         self.assertNotIn("statement_original.pdf", html)
+
+    def test_credit_card_purchase_and_refund_are_crossed_out_and_not_summed(self) -> None:
+        def transaction(
+            transaction_id: str,
+            transaction_time: str,
+            direction: str,
+            amount: str,
+            *,
+            card_type: str = "信用卡",
+        ) -> dict[str, object]:
+            return {
+                "transaction_id": transaction_id,
+                "bank_key": "icbc",
+                "bank_name": "工商银行",
+                "card_type": card_type,
+                "account_tail": "2481",
+                "transaction_card_tail": "2481",
+                "transaction_time": transaction_time,
+                "direction": direction,
+                "amount": amount,
+                "currency": "CNY",
+                "source_records": [],
+            }
+
+        transactions = [
+            transaction("purchase", "2026-01-01 09:00:00", "outflow", "100.00"),
+            transaction("refund", "2026-01-20 09:00:00", "inflow", "100.00"),
+            transaction("old-purchase", "2026-02-01", "outflow", "80.00"),
+            transaction("late-refund", "2026-03-10", "inflow", "80.00"),
+            transaction("debit-out", "2026-04-01", "outflow", "50.00", card_type="借记卡"),
+            transaction("debit-in", "2026-04-02", "inflow", "50.00", card_type="借记卡"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "full-review.html"
+            write_full_review_html(transactions, path)
+            html = path.read_text(encoding="utf-8")
+            short_window_path = Path(directory) / "short-window-review.html"
+            write_full_review_html(
+                transactions,
+                short_window_path,
+                credit_card_refund_window_days=10,
+            )
+            short_window_html = short_window_path.read_text(encoding="utf-8")
+
+        self.assertEqual(html.count('"is_cancelled_refund":true'), 2)
+        self.assertEqual(html.count('"refund_status":"交易取消退款"'), 2)
+        self.assertIn("tr.classList.add('cancelled-refund')", html)
+        self.assertIn(".cancelled-refund td{background-image:repeating-linear-gradient", html)
+        self.assertNotIn(".cancelled-refund td::after", html)
+        self.assertNotIn("node('s',row.amount", html)
+        self.assertIn("if(!row.is_cancelled_refund)", html)
+        self.assertIn("entry.count+=1;if(!row.is_cancelled_refund)", html)
+        self.assertIn('"credit_card_refund_window_days":31', html)
+        self.assertEqual(short_window_html.count('"is_cancelled_refund":true'), 0)
+        self.assertIn('"credit_card_refund_window_days":10', short_window_html)
+
+        with self.assertRaisesRegex(ValueError, "必须是正整数"):
+            write_full_review_html(transactions, Path("unused.html"), credit_card_refund_window_days=0)
+
+    def test_transaction_place_is_shown_only_for_credit_cards(self) -> None:
+        transactions = [
+            {
+                "transaction_id": "credit",
+                "bank_key": "icbc",
+                "bank_name": "工商银行",
+                "card_type": "信用卡",
+                "transaction_time": "2026-01-01",
+                "direction": "outflow",
+                "amount": "100.00",
+                "merchant": "归一化商户",
+                "raw_record": {"交易场所": "原始信用卡交易场所"},
+                "source_records": [],
+            },
+            {
+                "transaction_id": "debit",
+                "bank_key": "icbc",
+                "bank_name": "工商银行",
+                "card_type": "借记卡",
+                "transaction_time": "2026-01-02",
+                "direction": "outflow",
+                "amount": "100.00",
+                "merchant": "借记卡交易对方",
+                "raw_record": {"交易场所": "不应显示"},
+                "source_records": [],
+            },
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "full-review.html"
+            write_full_review_html(transactions, path)
+            html = path.read_text(encoding="utf-8")
+        payload_text = html.split('<script id="reviewData" type="application/json">', 1)[1].split(
+            "</script>", 1
+        )[0]
+        rows = {row["id"]: row for row in json.loads(payload_text)["rows"]}
+
+        self.assertEqual(rows["credit"]["transaction_place"], "原始信用卡交易场所")
+        self.assertEqual(rows["debit"]["transaction_place"], "—")
 
     def test_known_debit_banks_are_not_inferred_as_credit_cards(self) -> None:
         transactions = [

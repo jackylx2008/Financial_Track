@@ -8,6 +8,9 @@ from typing import Any
 from flows.modules.bank_transaction_schema import normalize_text_key, stable_transaction_id
 
 
+ICBC_UNSPECIFIED_CURRENCIES = frozenset({"其它", "其他", "OTHER", "OTH"})
+
+
 def dedupe_transactions(transactions: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     by_key: dict[str, list[dict[str, Any]]] = defaultdict(list)
     duplicate_count = 0
@@ -146,26 +149,47 @@ def _merge_cross_source_icbc_statements(
         card_tail = _icbc_credit_line_card_tail(candidate)
         if not card_tail:
             continue
-        exact_index[(*_icbc_statement_event_key(candidate), card_tail)].append(index)
-        basic_index[(*_icbc_statement_basic_key(candidate), card_tail)].append(index)
+        for date_key in _icbc_statement_dates(candidate):
+            for currency_key in _icbc_pdf_currency_keys(candidate):
+                exact_index[
+                    (*_icbc_statement_event_key(candidate, date_key, currency_key), card_tail)
+                ].append(index)
+                basic_index[
+                    (*_icbc_statement_basic_key(candidate, date_key, currency_key), card_tail)
+                ].append(index)
     for anchor_index, anchor in enumerate(transactions):
         transaction_card_tail = _icbc_email_statement_card_tail(anchor)
         if not transaction_card_tail or anchor_index in removed:
             continue
-        exact_key = (*_icbc_statement_event_key(anchor), transaction_card_tail)
-        candidate_indexes = [
-            index
-            for index in exact_index.get(exact_key, [])
-            if index != anchor_index and index not in matched_candidates
-        ]
+        candidate_indexes = sorted(
+            {
+                index
+                for date_key in _icbc_statement_dates(anchor)
+                for currency_key in _icbc_email_currency_keys(anchor)
+                for index in exact_index.get(
+                    (*_icbc_statement_event_key(anchor, date_key, currency_key), transaction_card_tail),
+                    [],
+                )
+                if index != anchor_index and index not in matched_candidates
+            }
+        )
         candidates = [(index, transactions[index]) for index in candidate_indexes]
         if len(candidates) != 1:
-            basic_key = (*_icbc_statement_basic_key(anchor), transaction_card_tail)
-            candidate_indexes = [
-                index
-                for index in basic_index.get(basic_key, [])
-                if index != anchor_index and index not in matched_candidates
-            ]
+            candidate_indexes = sorted(
+                {
+                    index
+                    for date_key in _icbc_statement_dates(anchor)
+                    for currency_key in _icbc_email_currency_keys(anchor)
+                    for index in basic_index.get(
+                        (
+                            *_icbc_statement_basic_key(anchor, date_key, currency_key),
+                            transaction_card_tail,
+                        ),
+                        [],
+                    )
+                    if index != anchor_index and index not in matched_candidates
+                }
+            )
             candidates = [(index, transactions[index]) for index in candidate_indexes]
         if len(candidates) != 1:
             continue
@@ -182,6 +206,16 @@ def _merge_cross_source_icbc_statements(
         merged["card_role"] = str(anchor.get("card_role") or "")
         merged["transaction_card_tail"] = transaction_card_tail
         merged["merged_raw_records"] = [candidate.get("raw_record"), anchor.get("raw_record")]
+        candidate_date = str(candidate.get("transaction_time") or "")[:10]
+        anchor_date = str(anchor.get("transaction_time") or "")[:10]
+        anchor_posting_date = str(anchor.get("posting_date") or "")[:10]
+        if anchor_date and anchor_date != candidate_date and anchor_posting_date == candidate_date:
+            # 打印流水只给出入账日期；月度邮件同时给出实际交易日期和入账日期。
+            merged["transaction_time"] = str(anchor.get("transaction_time") or "")
+        if anchor_posting_date:
+            merged["posting_date"] = anchor_posting_date
+        if str(candidate.get("currency") or "").upper() in ICBC_UNSPECIFIED_CURRENCIES:
+            merged["currency"] = str(anchor.get("currency") or candidate.get("currency") or "")
         ignored_warnings = {
             # The reviewed printed flow and monthly EML describe the same ICBC
             # transaction from different viewpoints.  PDF line wrapping and
@@ -245,18 +279,52 @@ def _icbc_credit_line_card_tail(transaction: dict[str, Any]) -> str:
     return digits[-4:] if len(digits) >= 4 else ""
 
 
-def _icbc_statement_basic_key(transaction: dict[str, Any]) -> tuple[str, str, str, str]:
-    event_date = str(transaction.get("transaction_time") or transaction.get("posting_date") or "")[:10]
+def _icbc_statement_dates(transaction: dict[str, Any]) -> list[str]:
+    return list(
+        dict.fromkeys(
+            date
+            for date in (
+                str(transaction.get("transaction_time") or "")[:10],
+                str(transaction.get("posting_date") or "")[:10],
+            )
+            if date
+        )
+    )
+
+
+def _icbc_statement_basic_key(
+    transaction: dict[str, Any],
+    event_date: str,
+    currency_key: str,
+) -> tuple[str, str, str, str, str]:
     return (
         str(transaction.get("bank_key") or ""),
         event_date,
         str(transaction.get("direction") or ""),
         str(transaction.get("amount") or ""),
+        currency_key,
     )
 
 
-def _icbc_statement_event_key(transaction: dict[str, Any]) -> tuple[str, str, str, str, str]:
-    return (*_icbc_statement_basic_key(transaction), _normalized_merchant(transaction))
+def _icbc_statement_event_key(
+    transaction: dict[str, Any],
+    event_date: str,
+    currency_key: str,
+) -> tuple[str, str, str, str, str, str]:
+    return (
+        *_icbc_statement_basic_key(transaction, event_date, currency_key),
+        _normalized_merchant(transaction),
+    )
+
+
+def _icbc_pdf_currency_keys(transaction: dict[str, Any]) -> list[str]:
+    currency = str(transaction.get("currency") or "").upper()
+    return ["*"] if currency in ICBC_UNSPECIFIED_CURRENCIES else [currency]
+
+
+def _icbc_email_currency_keys(transaction: dict[str, Any]) -> list[str]:
+    currency = str(transaction.get("currency") or "").upper()
+    return list(dict.fromkeys((currency, "*")))
 
 
 def _normalized_merchant(transaction: dict[str, Any]) -> str:

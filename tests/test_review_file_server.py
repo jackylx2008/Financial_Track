@@ -6,7 +6,7 @@ import json
 import ctypes
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from unittest.mock import MagicMock, patch
 
 from flows.gui.review_file_server import (
@@ -92,6 +92,39 @@ class ReviewFileServerTests(unittest.TestCase):
 
             self.assertEqual(payload["status"], "opened")
             self.assertEqual(opened, [source.resolve()])
+
+    def test_local_server_saves_review_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            raw_root = parent / "raw_data"
+            raw_root.mkdir()
+            review = parent / "review.html"
+            review.write_text("<h1>review</h1>", encoding="utf-8")
+            received: list[dict[str, object]] = []
+
+            def saver(payload: dict[str, object]) -> dict[str, object]:
+                received.append(payload)
+                return {"status": "saved"}
+
+            server = ReviewFileServer(review, raw_root, selection_saver=saver)
+            try:
+                url = server.start()
+                parsed = urlparse(url)
+                token = parse_qs(parsed.query)["token"][0]
+                endpoint = f"{parsed.scheme}://{parsed.netloc}/save-selection?token={token}"
+                request = Request(
+                    endpoint,
+                    data=json.dumps({"authoritative_group_token": "email-a"}).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urlopen(request, timeout=2) as response:
+                    payload = json.loads(response.read().decode("utf-8"))
+            finally:
+                server.close()
+
+            self.assertEqual(payload["status"], "saved")
+            self.assertEqual(received, [{"authoritative_group_token": "email-a"}])
 
 
 if __name__ == "__main__":

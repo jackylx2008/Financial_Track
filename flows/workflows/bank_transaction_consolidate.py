@@ -15,6 +15,7 @@ from flows.modules.bank_transaction_deduper import dedupe_transactions
 from flows.modules.bank_transaction_filter import filter_transactions
 from flows.modules.bank_transaction_full_review_html import write_full_review_html
 from flows.modules.bank_transaction_quality_report import build_quality_report
+from flows.modules.bank_source_selection import exclude_selected_sources, load_excluded_source_tokens
 from flows.modules.financial_document_ai import FinancialDocumentAiFallback
 from flows.modules.transaction_traceability import (
     apply_record_traceability,
@@ -40,11 +41,34 @@ def run(
     standalone_root = ctx.resolve_path(standalone_bank_root)
     output_path.mkdir(parents=True, exist_ok=True)
 
+    review_config = ctx.config.get("bank_transaction_review", {})
+    if not isinstance(review_config, dict):
+        raise ValueError("bank_transaction_review 配置必须是 mapping")
+    source_selection_file = ctx.resolve_path(
+        review_config.get("source_selection_file", "raw_data/bank_source_selection.local.txt")
+    )
+    excluded_source_tokens = load_excluded_source_tokens(source_selection_file)
     ai_fallback = FinancialDocumentAiFallback(ctx.config, ctx.project_root)
-    attachment_transactions, attachment_stats = read_attachment_transactions(attachment_manifest_file, ai_fallback)
+    attachment_transactions, attachment_stats = read_attachment_transactions(
+        attachment_manifest_file,
+        ai_fallback,
+        excluded_source_tokens=excluded_source_tokens,
+    )
     standalone_transactions, standalone_stats = read_standalone_bank_transactions(standalone_root)
     email_transactions, email_stats = read_email_candidate_transactions(email_records_file)
     raw_transactions = email_transactions + attachment_transactions + standalone_transactions
+    raw_transactions_before_source_selection = len(raw_transactions)
+    raw_transactions, source_selection_stats = exclude_selected_sources(
+        raw_transactions,
+        excluded_source_tokens,
+    )
+    if excluded_source_tokens:
+        logger.info(
+            "Applied local bank source selection: tokens=%s excluded_transactions=%s removed_source_records=%s",
+            len(excluded_source_tokens),
+            source_selection_stats["transactions_excluded"],
+            source_selection_stats["source_records_removed"],
+        )
     attachment_stats["files_seen"] += standalone_stats["files_seen"]
     attachment_stats["transactions"] += standalone_stats["transactions"]
     attachment_stats["parse_failures"] += standalone_stats["parse_failures"]
@@ -91,17 +115,21 @@ def run(
         encoding="utf-8",
     )
     payment_keys = {"alipay", "wechat"}
+    refund_window_days = review_config.get("credit_card_refund_window_days", 31)
     bank_review_records = [item for item in deduped_transactions if item.get("bank_key") not in payment_keys]
     payment_review_records = [item for item in deduped_transactions if item.get("bank_key") in payment_keys]
     full_review_html = write_full_review_html(
         bank_review_records,
         full_review_html_path,
-        title="银行交易完整人工审核集",
+        title="个人银行交易完整流水清单",
+        credit_card_refund_window_days=refund_window_days,
     )
     payment_review_html = write_full_review_html(
         payment_review_records,
         payment_review_html_path,
         title="支付宝与微信支付完整人工审核集",
+        include_date_range=False,
+        credit_card_refund_window_days=refund_window_days,
     )
     unresolved_files = attachment_stats.get("unresolved_files", [])
     unresolved_path.write_text(
@@ -120,6 +148,11 @@ def run(
         "email_records_file": str(email_records_file),
         "attachment_manifest_file": str(attachment_manifest_file),
         "raw_transactions": len(raw_transactions),
+        "raw_transactions_before_source_selection": raw_transactions_before_source_selection,
+        "source_selection_file": str(source_selection_file),
+        "excluded_source_tokens": len(excluded_source_tokens),
+        "source_selection_stats": source_selection_stats,
+        "attachment_files_excluded_by_selection": attachment_stats.get("files_excluded", 0),
         "deduped_transactions": len(deduped_transactions),
         "email_transactions": len(email_transactions),
         "attachment_transactions": len(attachment_transactions),
