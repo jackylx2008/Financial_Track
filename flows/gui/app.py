@@ -152,6 +152,9 @@ class WorkflowPanel(ttk.Frame):
         ttk.Button(toolbar, text="打开支付审核 HTML", command=self.open_payment_review_html).grid(
             row=0, column=3, padx=(6, 0)
         )
+        ttk.Button(toolbar, text="打开大额资金追溯", command=self.open_large_fund_trace_html).grid(
+            row=0, column=4, padx=(6, 0)
+        )
 
         columns = ("institution", "type", "file", "reason")
         self.unresolved_tree = ttk.Treeview(frame, columns=columns, show="headings", height=9)
@@ -208,6 +211,13 @@ class WorkflowPanel(ttk.Frame):
         path = self.app.project_root / "processed_data/normalized/payment_transactions_full_review.html"
         if not path.is_file():
             messagebox.showinfo("审核文件尚未生成", "请先执行自动归一化。", parent=self)
+            return
+        self.app.open_review_html(path)
+
+    def open_large_fund_trace_html(self) -> None:
+        path = self.app.project_root / "processed_data/normalized/large_fund_trace_review.html"
+        if not path.is_file():
+            messagebox.showinfo("追溯文件尚未生成", "请先执行自动归一化。", parent=self)
             return
         self.app.open_review_html(path)
 

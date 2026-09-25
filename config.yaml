@@ -93,6 +93,15 @@ bank_transaction_review:
   partial_refund_max_difference_ratio: ${BANK_TRANSACTION_REVIEW_PARTIAL_REFUND_MAX_DIFFERENCE_RATIO:-0.05}
   source_selection_file: ${BANK_SOURCE_SELECTION_FILE:-./raw_data/bank_source_selection.local.txt}
 
+# 大额资金追溯是基于同一账户资金池的解释性分配，不代表银行确认的资金因果关系。
+large_fund_trace:
+  enabled: ${LARGE_FUND_TRACE_ENABLED:-true}
+  threshold: ${LARGE_FUND_TRACE_THRESHOLD:-10000}
+  lookback_days: ${LARGE_FUND_TRACE_LOOKBACK_DAYS:-365}
+  allocation_method: ${LARGE_FUND_TRACE_ALLOCATION_METHOD:-lifo}
+  currencies: ${LARGE_FUND_TRACE_CURRENCIES_JSON:-["CNY"]}
+  excluded_account_types: ${LARGE_FUND_TRACE_EXCLUDED_ACCOUNT_TYPES_JSON:-["信用卡","贷记卡","支付账户"]}
+
 financial_attachment_cracker:
   hashcat_path: ${FINANCIAL_ATTACHMENT_HASHCAT_PATH:-../hashcat/hashcat.exe}
   zip2john_path: ${FINANCIAL_ATTACHMENT_ZIP2JOHN_PATH:-../john-1.9.0-jumbo-1-win64/run/zip2john.exe}

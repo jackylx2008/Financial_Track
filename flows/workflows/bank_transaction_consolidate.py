@@ -23,6 +23,7 @@ from flows.modules.transaction_traceability import (
     enrich_bank_source_provenance,
     write_history,
 )
+from flows.workflows.large_fund_trace import generate as generate_large_fund_trace
 
 
 logger = logging.getLogger(__name__)
@@ -140,6 +141,17 @@ def run(
         partial_refund_max_difference=partial_refund_max_difference,
         partial_refund_max_difference_ratio=partial_refund_max_difference_ratio,
     )
+    large_fund_config = ctx.config.get("large_fund_trace", {})
+    if not isinstance(large_fund_config, dict):
+        raise ValueError("large_fund_trace 配置必须是 mapping")
+    large_fund_trace = None
+    if large_fund_config.get("enabled", True):
+        large_fund_trace = generate_large_fund_trace(
+            ctx,
+            bank_review_records,
+            output_path,
+            input_path=jsonl_path,
+        )
     unresolved_files = attachment_stats.get("unresolved_files", [])
     unresolved_path.write_text(
         json.dumps(
@@ -180,6 +192,7 @@ def run(
         "bank_review_transactions": len(bank_review_records),
         "payment_review_html": payment_review_html,
         "payment_review_transactions": len(payment_review_records),
+        "large_fund_trace": large_fund_trace,
         "unresolved_files": len(unresolved_files),
         "unresolved_file_list": str(unresolved_path),
         "history": str(history_path),

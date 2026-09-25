@@ -498,6 +498,8 @@ processed_data/normalized/bank_transactions.json
 processed_data/normalized/bank_transactions_quality_report.md
 processed_data/normalized/bank_transactions_full_review.html
 processed_data/normalized/payment_transactions_full_review.html
+processed_data/normalized/large_fund_trace.json
+processed_data/normalized/large_fund_trace_review.html
 processed_data/normalized/bank_transactions_history.jsonl
 processed_data/normalized/email_normalization_unresolved.json
 ```
@@ -538,6 +540,20 @@ processed_data/normalized/email_normalization_unresolved.json
 未自动提取文件写入 `email_normalization_unresolved.json`，并在 GUI 页面右侧自动刷新显示。GUI 分别提供
 “打开个人银行交易完整流水清单”和“打开支付审核 HTML”：`bank_transactions_full_review.html` 只汇总各银行流水，
 `payment_transactions_full_review.html` 合并支付宝和微信支付流水，两类数据不再混排。
+同一次银行归一化还会生成“大额资金流水追溯分析”。GUI 的“打开大额资金追溯”按钮可直接打开
+`large_fund_trace_review.html`；页面默认按金额从大到小排列大额转入、转出，点击转出流水查看推断的上游
+资金来源，点击转入流水查看已经分配到的后续去向。当前模型在同一银行账户、同一币种内建立资金池，所有
+合格流水（包括未达到大额阈值的小额流水）都会参与余额消耗，默认采用最近收入优先的 LIFO 分配，并限制在
+365 天追溯窗口内。默认仅分析人民币借记/储蓄账户，排除信用卡、贷记卡和支付账户。
+
+大额追溯的阈值、窗口、币种和账户类型由 `config.yaml` 的 `large_fund_trace` 配置；默认阈值为
+10,000 元。资金本身具有可替代性，HTML 展示的是稳定、可复核的解释性分配，不是银行确认的资金因果关系；
+未匹配金额会明确显示为可能来自期初余额或追溯窗口外资金。也可以在已有归一化数据上单独重建页面：
+
+```powershell
+python flows/large_fund_trace.py
+```
+
 “个人银行交易完整流水清单”按“银行 + 卡片类型”展示机构，标题自动附加所读流水的最早至最新日期。
 主表包含账户尾号、卡号后4位、主/副卡、交易/入账日期、方向、精确金额、币种和来源定位；商户/对方全名、
 对方账号、未脱敏摘要和渠道保留在页面数据中，通过全文搜索统一检索，不再单独占列。银行归一化记录不再保存“交易类型”；工行借记卡的序号、地区代码仅保留在
