@@ -799,6 +799,8 @@ class FilteringAndReviewTests(unittest.TestCase):
         self.assertIn("openSource", html)
         self.assertIn("完整且不脱敏的交易摘要", html)
         self.assertIn("5200.25", html)
+        self.assertIn('"amount_display":"5,200.25"', html)
+        self.assertIn("appendCell(tr,row.amount_display,'money')", html)
         self.assertIn("当前筛选金额汇总", html)
         self.assertIn('"currencies":["人民币"]', html)
         self.assertIn("对应币种的基本单位", html)
