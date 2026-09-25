@@ -113,6 +113,9 @@ class LargeFundTraceTests(unittest.TestCase):
         self.assertIn("大额资金流水追溯分析", html)
         self.assertIn("showModal", html)
         self.assertIn("上游资金来源", html)
+        self.assertIn('class="trace-map"', html)
+        self.assertIn("createElementNS", html)
+        self.assertNotIn("<table", html)
         self.assertLess(html.index('"amount":"12000.00"'), html.index('"amount":"11000.00"'))
 
     def test_rejects_invalid_settings(self) -> None:
